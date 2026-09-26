@@ -3,6 +3,7 @@ import { apiFetch, roomFetch, humanBytes, isImageName, fileKey, validateFile } f
 import { saveRoomSession, getRoomSession } from '../lib/storage.js';
 import { uploadFile } from '../lib/uploader.js';
 import MessageRow, { fileUrl } from './MessageRow.jsx';
+import FileIcon from './FileIcon.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import Lightbox from './Lightbox.jsx';
 
@@ -400,14 +401,17 @@ export default function ChatPage({ config }) {
                 </div>
               ) : (
                 <div className="filecard me-card filebubble-sending">
-                  <div className="filecard-info">
-                    <div className="filecard-name" title={o.file.name}>{o.file.name}</div>
-                    <div className="filebubble-size">{humanBytes(o.file.size)}</div>
-                    <div className="msg-progress"><div className="bar" style={{ width: (o.pct || 0) + '%' }} /></div>
-                    <div className="progress-txt">
-                      {[o.pct != null ? o.pct + '%' : '', o.speed ? humanBytes(o.speed) + '/s' : ''].filter(Boolean).join(' · ')}
-                      {o.status === 'failed' ? ' · 失败' : ''}
+                  <div className="filecard-body">
+                    <div className="filecard-info">
+                      <div className="filecard-name" title={o.file.name}>{o.file.name}</div>
+                      <div className="filecard-size">{humanBytes(o.file.size)}</div>
+                      <div className="msg-progress"><div className="bar" style={{ width: (o.pct || 0) + '%' }} /></div>
+                      <div className="progress-txt">
+                        {[o.pct != null ? o.pct + '%' : '', o.speed ? humanBytes(o.speed) + '/s' : ''].filter(Boolean).join(' · ')}
+                        {o.status === 'failed' ? ' · 失败' : ''}
+                      </div>
                     </div>
+                    <FileIcon name={o.file.name} />
                   </div>
                   {o.status === 'failed' && (
                     <button
