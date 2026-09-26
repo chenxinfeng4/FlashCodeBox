@@ -10,21 +10,25 @@ func RegisterRoutes(r *gin.Engine, a *App) {
 
 	api.GET("config", a.PublicConfig)
 
-	send := api.Group("send", a.uploadRateLimit())
-	send.POST("text", a.SendText)
-	send.POST("file", a.SendFile)
+	// 聊天室
+	room := api.Group("room", a.uploadRateLimit())
+	room.POST("create", a.RoomCreate)                       // 楼主第一条文字消息 → 建房
+	room.POST("join/:code", a.JoinRoom)                     // 访客加入
+	room.GET(":code/messages", a.RoomMessages)              // 轮询拉取（after=增量）
+	room.POST(":code/send/text", a.RoomSendText)            // 发文字
+	room.POST("send/file", a.RoomSendFile)                  // 发文件（建房或追加）
+	room.GET(":code/messages/:msg/file", a.RoomMessageFile) // 消息文件下载/内联
+	room.GET(":code/settings", a.RoomSettings)              // 楼主读设置
+	room.PUT(":code/settings", a.RoomSettings)              // 楼主改设置
 
+	// 分片上传（complete 落入房间）
 	up := api.Group("upload", a.uploadRateLimit())
 	up.POST("init", a.UploadInit)
 	up.PUT(":id/:index", a.UploadChunk)
 	up.POST(":id/complete", a.UploadComplete)
 	up.GET(":id/status", a.UploadStatus)
 
-	api.POST("get", a.GetShare)
-	api.GET("get", a.GetShare)
-	api.GET("download/:code", a.Download)       // 兼容：第一个内容
-	api.GET("download/:code/:item", a.Download) // 指定条目
-
+	// 管理后台
 	admin := api.Group("admin")
 	admin.GET("status", a.AdminStatus)
 	admin.POST("setup", a.AdminSetup)
@@ -34,5 +38,5 @@ func RegisterRoutes(r *gin.Engine, a *App) {
 	auth.GET("config", a.AdminGetConfig)
 	auth.PUT("config", a.AdminPutConfig)
 	auth.GET("list", a.AdminList)
-	auth.DELETE("share/:code", a.AdminDelete)
+	auth.DELETE("room/:code", a.AdminDelete)
 }

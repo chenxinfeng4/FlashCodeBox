@@ -3,48 +3,56 @@ package models
 import "time"
 
 const (
+	RoleOwner = "owner"
+	RoleGuest = "guest"
+
 	TypeText = "text"
 	TypeFile = "file"
 
-	// ExpireCountUnlimited means the share can be picked up without a count limit.
-	ExpireCountUnlimited = -1
+	// MaxMessagesPerRoom caps how many messages one room may hold.
+	MaxMessagesPerRoom = 500
 
-	// MaxItemsPerShare caps how many items one share (pickup code) may hold.
-	MaxItemsPerShare = 100
+	// SenderNameOwner is the display name for the room owner.
+	SenderNameOwner = "楼主"
 )
 
-// FileCode is the share header: a pickup code plus its expiry state.
-// The actual content lives in ShareItem rows (text messages / files),
-// which can be appended to the share at any time while it is alive.
-type FileCode struct {
-	ID          int64  `json:"id"`
-	Code        string `json:"code"`
-	ExpireAt    int64  `json:"expire_at"`    // unix seconds; 0 = never
-	ExpireCount int64  `json:"expire_count"` // -1 = unlimited; >0 = remaining pickups
-	UsedCount   int64  `json:"used_count"`
-	CreatedAt   int64  `json:"created_at"`
+// Room is a chat room; its code doubles as the "meeting number".
+type Room struct {
+	ID         int64  `json:"id"`
+	Code       string `json:"code"`
+	ExpireAt   int64  `json:"expire_at"`   // unix seconds; 0 = never
+	AllowReply bool   `json:"allow_reply"` // 访客可否回消息
+	CreatedAt  int64  `json:"created_at"`
 }
 
-func (f *FileCode) IsExpired(now int64) bool {
-	if f.ExpireAt > 0 && f.ExpireAt <= now {
-		return true
-	}
-	if f.ExpireCount == 0 {
-		return true
-	}
-	return false
+func (r *Room) IsExpired(now int64) bool {
+	return r.ExpireAt > 0 && r.ExpireAt <= now
 }
 
-// ShareItem is one piece of content inside a share.
-type ShareItem struct {
+// Member is a room participant holding a random token.
+type Member struct {
+	ID        int64  `json:"id"`
+	RoomCode  string `json:"room_code"`
+	Role      string `json:"role"`     // owner | guest
+	GuestNo   int64  `json:"guest_no"` // 访客编号（楼主为 0）
+	Token     string `json:"-"`
+	Sender    string `json:"sender"` // 展示名：楼主 / 访客N
+	CreatedAt int64  `json:"created_at"`
+}
+
+// Message is one chat message (text or file).
+type Message struct {
 	ID          int64  `json:"id"`
-	ShareCode   string `json:"share_code"`
+	RoomCode    string `json:"room_code"`
+	MemberID    int64  `json:"member_id"`
+	Role        string `json:"role"`
+	Sender      string `json:"sender"` // 楼主 / 访客N
 	Type        string `json:"type"`
 	Text        string `json:"text,omitempty"`
 	StoragePath string `json:"-"`
 	Filename    string `json:"filename,omitempty"`
 	Size        int64  `json:"size"`
-	FileHash    string `json:"file_hash,omitempty"`
+	FileHash    string `json:"-"`
 	CreatedAt   int64  `json:"created_at"`
 }
 

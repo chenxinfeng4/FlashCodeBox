@@ -179,8 +179,8 @@ func (a *App) UploadChunk(c *gin.Context) {
 }
 
 // UploadComplete merges chunks in order into the final payload, verifies the
-// whole-file size (and hash when provided), then appends it to a share —
-// either an existing one (code field) or a freshly created one.
+// whole-file size (and hash when provided), then posts it into a room —
+// either an existing one (code+token) or a freshly created one (owner).
 func (a *App) UploadComplete(c *gin.Context) {
 	session, okS := a.loadSession(c)
 	if !okS {
@@ -193,10 +193,28 @@ func (a *App) UploadComplete(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
-	share, status, err := a.resolveShare(ctx, ef.Code)
-	if err != nil {
-		fail(c, status, err.Error())
-		return
+	// 会议号/令牌：JSON body（ef）或 multipart 表单均可
+	code := normalizeCode(c.PostForm("code"))
+	if code == "" {
+		code = normalizeCode(ef.Code)
+	}
+	token := strings.TrimSpace(c.PostForm("token"))
+	if token == "" {
+		token = strings.TrimSpace(ef.Token)
+	}
+
+	// 已有房间：先做权限校验
+	var room *models.Room
+	if code != "" {
+		var okR bool
+		room, okR = a.loadRoom(c, code)
+		if !okR {
+			return
+		}
+		if _, status, err := a.checkReplyPermission(ctx, room, token); err != nil {
+			fail(c, status, err.Error())
+			return
+		}
 	}
 
 	parts, err := a.Store.ListChunkParts(ctx, session.UploadID)
@@ -251,22 +269,47 @@ func (a *App) UploadComplete(c *gin.Context) {
 		return
 	}
 
-	item := &models.ShareItem{
-		Type:        models.TypeFile,
-		StoragePath: relPath,
-		Filename:    session.FileName,
-		Size:        size,
-		FileHash:    hash,
+	var member *models.Member
+	var msg *models.Message
+	var status int
+	if room == nil {
+		room, member, msg, status, err = a.appendMessage(ctx, nil, ef, "",
+			func() *models.Message {
+				return &models.Message{
+					Type: models.TypeFile, StoragePath: relPath,
+					Filename: session.FileName, Size: size, FileHash: hash,
+				}
+			})
+	} else {
+		var member2 *models.Member
+		member2, status, err = a.checkReplyPermission(ctx, room, token)
+		if err != nil {
+			_ = a.Storage.Delete(relPath)
+			fail(c, status, err.Error())
+			return
+		}
+		member = member2
+		msg, status, err = a.insertRoomMessage(ctx, room, member,
+			func() *models.Message {
+				return &models.Message{
+					Type: models.TypeFile, StoragePath: relPath,
+					Filename: session.FileName, Size: size, FileHash: hash,
+				}
+			})
 	}
-	share, err = a.appendItem(ctx, share, item, ef)
 	if err != nil {
 		_ = a.Storage.Delete(relPath)
-		fail(c, http.StatusInternalServerError, err.Error())
+		fail(c, status, err.Error())
 		return
 	}
 	_ = a.Store.DeleteChunkSession(ctx, session.UploadID)
 	_ = os.RemoveAll(filepath.Join(a.ChunkDir, session.UploadID))
-	ok(c, shareStateResp(share, models.TypeFile, session.FileName))
+	ok(c, gin.H{
+		"room":    roomView(room),
+		"token":   member.Token,
+		"member":  memberView(member),
+		"message": messageView(msg),
+	})
 }
 
 // UploadStatus lets clients inspect which parts already landed (resume).

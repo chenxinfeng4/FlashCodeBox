@@ -34,36 +34,36 @@ func Start(ctx context.Context, cfg *config.Manager, st *store.Store, sto storag
 func sweep(cfg *config.Manager, st *store.Store, sto storage.Storage, chunkDir string) {
 	now := models.Now()
 
-	// 1. Expired shares: delete every item payload first, then cascade rows.
-	if expired, err := st.ExpiredShares(context.Background(), now); err != nil {
-		log.Printf("[janitor] 查询过期分享失败: %v", err)
+	// 1. 过期聊天室：先删全部消息文件，再级联删行。
+	if expired, err := st.ExpiredRooms(context.Background(), now); err != nil {
+		log.Printf("[janitor] 查询过期聊天室失败: %v", err)
 	} else {
-		for _, fc := range expired {
-			items, err := st.ListShareItems(context.Background(), fc.Code)
+		for _, r := range expired {
+			msgs, err := st.ListMessages(context.Background(), r.Code, 0, 10000)
 			if err != nil {
-				log.Printf("[janitor] 读取分享条目失败 %s: %v", fc.Code, err)
+				log.Printf("[janitor] 读取消息失败 %s: %v", r.Code, err)
 			}
-			for _, it := range items {
-				if it.Type == models.TypeFile && it.StoragePath != "" {
-					if err := sto.Delete(it.StoragePath); err != nil {
-						log.Printf("[janitor] 删除过期文件失败 %s: %v", it.StoragePath, err)
+			for _, m := range msgs {
+				if m.Type == models.TypeFile && m.StoragePath != "" {
+					if err := sto.Delete(m.StoragePath); err != nil {
+						log.Printf("[janitor] 删除过期文件失败 %s: %v", m.StoragePath, err)
 					}
 				}
 			}
-			if err := st.DeleteShareCascade(context.Background(), fc.Code); err != nil {
-				log.Printf("[janitor] 级联删除分享失败 %s: %v", fc.Code, err)
+			if err := st.DeleteRoomCascade(context.Background(), r.Code); err != nil {
+				log.Printf("[janitor] 级联删除聊天室失败 %s: %v", r.Code, err)
 			} else {
-				log.Printf("[janitor] 已清理过期分享 %s（%d 条内容）", fc.Code, len(items))
+				log.Printf("[janitor] 已清理过期聊天室 %s（%d 条消息）", r.Code, len(msgs))
 			}
 		}
 	}
 
-	// 1.5 Empty shares (process died before first item landed).
-	if codes, err := st.DeleteEmptyShares(context.Background(), now-3600); err != nil {
-		log.Printf("[janitor] 清理空分享失败: %v", err)
+	// 1.5 空房间（建房后第一条消息没落库的崩溃残留）。
+	if codes, err := st.EmptyRooms(context.Background(), now-3600); err != nil {
+		log.Printf("[janitor] 清理空房间失败: %v", err)
 	} else {
 		for _, code := range codes {
-			log.Printf("[janitor] 已清理空分享 %s", code)
+			log.Printf("[janitor] 已清理空房间 %s", code)
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	crand "crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
@@ -21,69 +22,98 @@ type Store struct {
 func New(gdb *sql.DB) *Store { return &Store{gdb: gdb} }
 
 // ---------------------------------------------------------------------------
-// share headers (pickup codes)
+// rooms
 
-func (s *Store) InsertShare(ctx context.Context, c *models.FileCode) error {
+func (s *Store) InsertRoom(ctx context.Context, r *models.Room) error {
 	res, err := s.gdb.ExecContext(ctx,
-		`INSERT INTO file_codes (code, expire_at, expire_count, used_count, created_at)
-		 VALUES (?,?,?,?,?)`,
-		c.Code, c.ExpireAt, c.ExpireCount, 0, c.CreatedAt,
+		`INSERT INTO rooms (code, expire_at, allow_reply, created_at) VALUES (?,?,?,?)`,
+		r.Code, r.ExpireAt, boolInt(r.AllowReply), r.CreatedAt,
 	)
 	if err != nil {
 		return err
 	}
-	c.ID, _ = res.LastInsertId()
+	r.ID, _ = res.LastInsertId()
 	return nil
 }
 
-const shareCols = `id, code, expire_at, expire_count, used_count, created_at`
+const roomCols = `id, code, expire_at, allow_reply, created_at`
 
-func scanShare(scan func(dest ...any) error) (*models.FileCode, error) {
-	var c models.FileCode
-	err := scan(&c.ID, &c.Code, &c.ExpireAt, &c.ExpireCount, &c.UsedCount, &c.CreatedAt)
+func scanRoom(scan func(dest ...any) error) (*models.Room, error) {
+	var r models.Room
+	var allow int64
+	err := scan(&r.ID, &r.Code, &r.ExpireAt, &allow, &r.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &c, nil
+	r.AllowReply = allow != 0
+	return &r, nil
 }
 
-func (s *Store) GetByCode(ctx context.Context, code string) (*models.FileCode, error) {
-	row := s.gdb.QueryRowContext(ctx, `SELECT `+shareCols+` FROM file_codes WHERE code = ?`, code)
-	return scanShare(row.Scan)
+func (s *Store) GetRoom(ctx context.Context, code string) (*models.Room, error) {
+	row := s.gdb.QueryRowContext(ctx, `SELECT `+roomCols+` FROM rooms WHERE code = ?`, code)
+	return scanRoom(row.Scan)
 }
 
-// ConsumeByCode atomically consumes one pickup: it only succeeds while the
-// share is neither time-expired nor count-exhausted, bumping used_count and
-// decrementing expire_count in the same statement (race-free under SQLite's
-// single-writer model).
-func (s *Store) ConsumeByCode(ctx context.Context, code string, now int64) (*models.FileCode, error) {
-	row := s.gdb.QueryRowContext(ctx, `
-		UPDATE file_codes SET
-			used_count   = used_count + 1,
-			expire_count = CASE WHEN expire_count > 0 THEN expire_count - 1 ELSE expire_count END
-		WHERE code = ?
-		  AND (expire_count < 0 OR expire_count > 0)
-		  AND (expire_at = 0 OR expire_at > ?)
-		RETURNING `+shareCols, code, now)
-	return scanShare(row.Scan)
+func (s *Store) SetRoomReply(ctx context.Context, code string, allow bool) error {
+	_, err := s.gdb.ExecContext(ctx, `UPDATE rooms SET allow_reply = ? WHERE code = ?`, boolInt(allow), code)
+	return err
 }
 
-// ExpiredShares returns every expired share header. The caller must delete
-// item payloads (files) first and then call DeleteShareCascade per share.
-func (s *Store) ExpiredShares(ctx context.Context, now int64) ([]*models.FileCode, error) {
-	rows, err := s.gdb.QueryContext(ctx, `SELECT `+shareCols+` FROM file_codes
-		WHERE (expire_at > 0 AND expire_at <= ?) OR expire_count = 0`, now)
+func (s *Store) SetRoomExpire(ctx context.Context, code string, expireAt int64) error {
+	_, err := s.gdb.ExecContext(ctx, `UPDATE rooms SET expire_at = ? WHERE code = ?`, expireAt, code)
+	return err
+}
+
+// ExpiredRooms returns every expired room header (caller cascades deletion).
+func (s *Store) ExpiredRooms(ctx context.Context, now int64) ([]*models.Room, error) {
+	rows, err := s.gdb.QueryContext(ctx, `SELECT `+roomCols+` FROM rooms WHERE expire_at > 0 AND expire_at <= ?`, now)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []*models.FileCode
+	var out []*models.Room
 	for rows.Next() {
-		c, err := scanShare(rows.Scan)
+		r, err := scanRoom(rows.Scan)
 		if err != nil {
+			return out, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DeleteRoomCascade removes a room, its members and messages.
+// Payload files must be deleted by the caller (it needs the paths first).
+func (s *Store) DeleteRoomCascade(ctx context.Context, code string) error {
+	for _, q := range []string{
+		`DELETE FROM messages WHERE room_code = ?`,
+		`DELETE FROM members WHERE room_code = ?`,
+		`DELETE FROM rooms WHERE code = ?`,
+	} {
+		if _, err := s.gdb.ExecContext(ctx, q, code); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// EmptyRooms returns room codes created before `before` without any message
+// (process died between room insert and first message insert).
+func (s *Store) EmptyRooms(ctx context.Context, before int64) ([]string, error) {
+	rows, err := s.gdb.QueryContext(ctx, `SELECT code FROM rooms
+		WHERE created_at < ?
+		  AND NOT EXISTS (SELECT 1 FROM messages WHERE messages.room_code = rooms.code)`, before)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
 			return out, err
 		}
 		out = append(out, c)
@@ -91,164 +121,180 @@ func (s *Store) ExpiredShares(ctx context.Context, now int64) ([]*models.FileCod
 	return out, rows.Err()
 }
 
-// DeleteEmptyShares removes share headers that never got any item (e.g. the
-// process died between header insert and item insert). Returns removed codes.
-func (s *Store) DeleteEmptyShares(ctx context.Context, before int64) ([]string, error) {
-	rows, err := s.gdb.QueryContext(ctx, `SELECT code FROM file_codes
-		WHERE created_at < ?
-		  AND NOT EXISTS (SELECT 1 FROM share_items WHERE share_code = file_codes.code)`, before)
-	if err != nil {
-		return nil, err
-	}
-	var codes []string
-	for rows.Next() {
-		var c string
-		if err := rows.Scan(&c); err != nil {
-			rows.Close()
-			return codes, err
-		}
-		codes = append(codes, c)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return codes, err
-	}
-	for _, c := range codes {
-		_, err := s.gdb.ExecContext(ctx, `DELETE FROM file_codes WHERE code = ?`, c)
-		if err != nil {
-			return codes, err
-		}
-	}
-	return codes, nil
-}
-
-func (s *Store) ListCodes(ctx context.Context, offset, limit int) ([]*models.FileCode, int, error) {
+func (s *Store) ListRooms(ctx context.Context, offset, limit int) ([]*models.Room, int, error) {
 	var total int
-	if err := s.gdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM file_codes`).Scan(&total); err != nil {
+	if err := s.gdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM rooms`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.gdb.QueryContext(ctx, `SELECT `+shareCols+` FROM file_codes
+	rows, err := s.gdb.QueryContext(ctx, `SELECT `+roomCols+` FROM rooms
 		ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
-	var out []*models.FileCode
+	var out []*models.Room
 	for rows.Next() {
-		c, err := scanShare(rows.Scan)
+		r, err := scanRoom(rows.Scan)
 		if err != nil {
 			return nil, 0, err
 		}
-		out = append(out, c)
+		out = append(out, r)
 	}
 	return out, total, rows.Err()
 }
 
-// DeleteShareCascade removes a share header and all of its items.
-// Files on storage must be deleted by the caller (it needs the paths first).
-func (s *Store) DeleteShareCascade(ctx context.Context, code string) error {
-	if _, err := s.gdb.ExecContext(ctx, `DELETE FROM share_items WHERE share_code = ?`, code); err != nil {
-		return err
-	}
-	_, err := s.gdb.ExecContext(ctx, `DELETE FROM file_codes WHERE code = ?`, code)
-	return err
-}
-
 // ---------------------------------------------------------------------------
-// share items
+// members
 
-func (s *Store) AddShareItem(ctx context.Context, it *models.ShareItem) error {
-	res, err := s.gdb.ExecContext(ctx, `INSERT INTO share_items
-		(share_code, type, text, storage_path, filename, size, file_hash, created_at)
-		VALUES (?,?,?,?,?,?,?,?)`,
-		it.ShareCode, it.Type, it.Text, it.StoragePath, it.Filename, it.Size, it.FileHash, it.CreatedAt,
+func (s *Store) InsertMember(ctx context.Context, m *models.Member) error {
+	res, err := s.gdb.ExecContext(ctx,
+		`INSERT INTO members (room_code, role, guest_no, token, created_at) VALUES (?,?,?,?,?)`,
+		m.RoomCode, m.Role, m.GuestNo, m.Token, m.CreatedAt,
 	)
 	if err != nil {
 		return err
 	}
-	it.ID, _ = res.LastInsertId()
+	m.ID, _ = res.LastInsertId()
 	return nil
 }
 
-func (s *Store) CountShareItems(ctx context.Context, code string) (int, error) {
-	var n int
-	err := s.gdb.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM share_items WHERE share_code = ?`, code).Scan(&n)
-	return n, err
-}
+const memberCols = `id, room_code, role, guest_no, token, created_at`
 
-func (s *Store) ListShareItems(ctx context.Context, code string) ([]*models.ShareItem, error) {
-	rows, err := s.gdb.QueryContext(ctx, `SELECT `+itemCols+` FROM share_items
-		WHERE share_code = ? ORDER BY id`, code)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []*models.ShareItem
-	for rows.Next() {
-		it, err := scanItem(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, it)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) GetShareItem(ctx context.Context, code string, itemID int64) (*models.ShareItem, error) {
-	row := s.gdb.QueryRowContext(ctx, `SELECT `+itemCols+` FROM share_items
-		WHERE share_code = ? AND id = ?`, code, itemID)
-	return scanItem(row.Scan)
-}
-
-// DeleteShareItem removes a single item from a share (e.g. a lost file).
-func (s *Store) DeleteShareItem(ctx context.Context, code string, itemID int64) error {
-	_, err := s.gdb.ExecContext(ctx,
-		`DELETE FROM share_items WHERE share_code = ? AND id = ?`, code, itemID)
-	return err
-}
-
-// ItemsForCodes loads items for a batch of share codes (admin list page).
-func (s *Store) ItemsForCodes(ctx context.Context, codes []string) (map[string][]*models.ShareItem, error) {
-	out := make(map[string][]*models.ShareItem, len(codes))
-	if len(codes) == 0 {
-		return out, nil
-	}
-	placeholders := strings.Repeat("?,", len(codes))
-	placeholders = placeholders[:len(placeholders)-1]
-	args := make([]any, len(codes))
-	for i, c := range codes {
-		args[i] = c
-	}
-	rows, err := s.gdb.QueryContext(ctx, `SELECT `+itemCols+` FROM share_items
-		WHERE share_code IN (`+placeholders+`) ORDER BY share_code, id`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		it, err := scanItem(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		out[it.ShareCode] = append(out[it.ShareCode], it)
-	}
-	return out, rows.Err()
-}
-
-const itemCols = `id, share_code, type, text, storage_path, filename, size, file_hash, created_at`
-
-func scanItem(scan func(dest ...any) error) (*models.ShareItem, error) {
-	var it models.ShareItem
-	err := scan(&it.ID, &it.ShareCode, &it.Type, &it.Text, &it.StoragePath,
-		&it.Filename, &it.Size, &it.FileHash, &it.CreatedAt)
+func scanMember(scan func(dest ...any) error) (*models.Member, error) {
+	var m models.Member
+	err := scan(&m.ID, &m.RoomCode, &m.Role, &m.GuestNo, &m.Token, &m.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &it, nil
+	if m.Role == models.RoleGuest {
+		m.Sender = fmt.Sprintf("访客%d", m.GuestNo)
+	} else {
+		m.Sender = models.SenderNameOwner
+	}
+	return &m, nil
+}
+
+// GetMemberByToken resolves a member by room code + token.
+func (s *Store) GetMemberByToken(ctx context.Context, code, token string) (*models.Member, error) {
+	row := s.gdb.QueryRowContext(ctx, `SELECT `+memberCols+` FROM members
+		WHERE room_code = ? AND token = ?`, code, token)
+	return scanMember(row.Scan)
+}
+
+// NextGuestNo allocates the next guest number for a room (atomic enough:
+// SQLite serializes writers, and the single connection removes races).
+func (s *Store) NextGuestNo(ctx context.Context, code string) (int64, error) {
+	var n sql.NullInt64
+	err := s.gdb.QueryRowContext(ctx,
+		`SELECT MAX(guest_no) FROM members WHERE room_code = ? AND role = ?`, code, models.RoleGuest).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n.Int64 + 1, nil
+}
+
+func (s *Store) CountMembers(ctx context.Context, code string) (int, error) {
+	var n int
+	err := s.gdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM members WHERE room_code = ?`, code).Scan(&n)
+	return n, err
+}
+
+// ---------------------------------------------------------------------------
+// messages
+
+func (s *Store) InsertMessage(ctx context.Context, msg *models.Message) error {
+	res, err := s.gdb.ExecContext(ctx, `INSERT INTO messages
+		(room_code, member_id, role, sender, type, text, storage_path, filename, size, file_hash, created_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		msg.RoomCode, msg.MemberID, msg.Role, msg.Sender, msg.Type,
+		msg.Text, msg.StoragePath, msg.Filename, msg.Size, msg.FileHash, msg.CreatedAt,
+	)
+	if err != nil {
+		return err
+	}
+	msg.ID, _ = res.LastInsertId()
+	return nil
+}
+
+const msgCols = `id, room_code, member_id, role, sender, type, text, storage_path, filename, size, file_hash, created_at`
+
+func scanMessage(scan func(dest ...any) error) (*models.Message, error) {
+	var m models.Message
+	err := scan(&m.ID, &m.RoomCode, &m.MemberID, &m.Role, &m.Sender, &m.Type,
+		&m.Text, &m.StoragePath, &m.Filename, &m.Size, &m.FileHash, &m.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+func (s *Store) CountMessages(ctx context.Context, code string) (int, error) {
+	var n int
+	err := s.gdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE room_code = ?`, code).Scan(&n)
+	return n, err
+}
+
+// ListMessages returns room messages with id > after ordered ascending.
+func (s *Store) ListMessages(ctx context.Context, code string, after int64, limit int) ([]*models.Message, error) {
+	rows, err := s.gdb.QueryContext(ctx, `SELECT `+msgCols+` FROM messages
+		WHERE room_code = ? AND id > ? ORDER BY id LIMIT ?`, code, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*models.Message
+	for rows.Next() {
+		m, err := scanMessage(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetMessage(ctx context.Context, code string, msgID int64) (*models.Message, error) {
+	row := s.gdb.QueryRowContext(ctx, `SELECT `+msgCols+` FROM messages
+		WHERE room_code = ? AND id = ?`, code, msgID)
+	return scanMessage(row.Scan)
+}
+
+func (s *Store) DeleteMessage(ctx context.Context, code string, msgID int64) error {
+	_, err := s.gdb.ExecContext(ctx, `DELETE FROM messages WHERE room_code = ? AND id = ?`, code, msgID)
+	return err
+}
+
+// MessagesForRooms loads messages for a batch of rooms (admin list page).
+func (s *Store) MessagesForRooms(ctx context.Context, codes []string) (map[string][]*models.Message, error) {
+	out := make(map[string][]*models.Message, len(codes))
+	if len(codes) == 0 {
+		return out, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(codes)), ",")
+	args := make([]any, len(codes))
+	for i, c := range codes {
+		args[i] = c
+	}
+	rows, err := s.gdb.QueryContext(ctx, `SELECT `+msgCols+` FROM messages
+		WHERE room_code IN (`+placeholders+`) ORDER BY room_code, id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		m, err := scanMessage(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out[m.RoomCode] = append(out[m.RoomCode], m)
+	}
+	return out, rows.Err()
 }
 
 // ---------------------------------------------------------------------------
@@ -375,15 +421,15 @@ func (s *Store) AllChunkUploadIDs(ctx context.Context) ([]string, error) {
 }
 
 // ---------------------------------------------------------------------------
-// code generation
+// code / token generation
 
 const (
 	secretAlphabet  = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no 0/O/1/I: avoids pickup confusion
 	CodeGenAttempts = 64
 )
 
-// RandomCode returns a candidate code: 5-digit number, or 5 chars of an
-// unambiguous A-Z/2-9 alphabet ("secret" style, like the original).
+// RandomCode returns a candidate room code: 5-digit number, or 5 chars of an
+// unambiguous A-Z/2-9 alphabet ("secret" style).
 func RandomCode(codeType string) (string, error) {
 	switch codeType {
 	case "secret":
@@ -403,6 +449,22 @@ func RandomCode(codeType string) (string, error) {
 		}
 		return fmt.Sprintf("%05d", n.Int64()+10000), nil
 	default:
-		return "", fmt.Errorf("未知取件码类型: %s", codeType)
+		return "", fmt.Errorf("未知会议号类型: %s", codeType)
 	}
+}
+
+// RandomToken returns a 32-byte hex token for member authentication.
+func RandomToken() (string, error) {
+	var b [32]byte
+	if _, err := crand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+func boolInt(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }

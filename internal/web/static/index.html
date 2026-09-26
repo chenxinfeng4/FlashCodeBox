@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>文件快递 · 用取件码收发文本与文件</title>
-<meta name="description" content=" FileSender —— 用取件码安全收发文本与文件，支持反向代理子路径部署">
+<title>文件快递 · 聊天室</title>
+<meta name="description" content="FileSender —— 用会议号开一个可收发文字与文件的聊天室，支持反向代理子路径部署">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%234f46e5'/%3E%3Cpath d='M7 9h10M7 13h7M12 17l3-3-3-3' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -28,35 +28,37 @@
   首次使用：请先 <a href="#/admin">设置管理密码</a> 完成初始化。
 </div>
 
-<!-- ===================== 主视图：发送 + 取件 ===================== -->
-<main class="layout" id="mainView">
-
-  <!-- 发送：微信式聊天窗口，文字+文件混搭 -->
-  <section class="card" id="sendPanel" aria-label="发送">
+<!-- ===================== 主视图：聊天室 ===================== -->
+<main class="layout single" id="mainView">
+  <section class="card chat" id="chatPanel" aria-label="聊天室">
     <div class="chat-head">
       <div class="expire-inline" id="expireCtrl" title="有效期">
         <select id="expireStyle" aria-label="有效期单位">
-          <option value="day" selected>天</option>
           <option value="hour">小时</option>
-          <option value="minute">分钟</option>
-          <option value="count">可取次数</option>
+          <option value="day" selected>天</option>
           <option value="forever">永久</option>
         </select>
-        <input id="expireValue" type="number" value="3" min="1" max="9999" aria-label="有效期数值">
+        <input id="expireValue" type="number" value="1" min="1" max="9999" aria-label="有效期数值">
       </div>
+      <span class="hint" id="roomState">发送第一条消息自动创建会议</span>
       <div class="chat-head-spacer"></div>
       <div class="chat-code-area" id="codeArea" hidden>
-        <span class="chat-code-label">取件码</span>
-        <span class="chat-code" id="resultCode">—</span>
-        <button class="iconbtn" id="copyCodeBtn" type="button" title="复制取件码" aria-label="复制取件码">
+        <span class="chat-code-label">会议号</span>
+        <span class="chat-code" id="roomCode">—</span>
+        <button class="iconbtn" id="copyCodeBtn" type="button" title="复制会议号" aria-label="复制会议号">
           <svg viewBox="0 0 24 24" width="15" height="15"><rect x="9" y="9" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M5 15V5a2 2 0 012-2h10" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
         </button>
-        <button class="iconbtn" id="copyLinkBtn" type="button" title="复制取件链接" aria-label="复制取件链接">
+        <button class="iconbtn" id="copyLinkBtn" type="button" title="复制邀请链接" aria-label="复制邀请链接">
           <svg viewBox="0 0 24 24" width="15" height="15"><path d="M10 14a5 5 0 007.5.5l3-3a5 5 0 00-7-7l-1.7 1.7" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M14 10a5 5 0 00-7.5-.5l-3 3a5 5 0 007 7l1.7-1.7" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
         </button>
       </div>
-      <button class="iconbtn" id="newShareBtn" type="button" title="新开分享" aria-label="新开分享" hidden>
-        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <span class="hint" id="memberHint" hidden></span>
+      <button class="btn ghost" id="joinBtn" type="button">加入会议</button>
+      <button class="iconbtn" id="settingsBtn" type="button" title="聊天室设置" aria-label="聊天室设置" hidden>
+        <svg viewBox="0 0 24 24" width="17" height="17"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34h0a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55h0a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87v0a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="iconbtn" id="leaveBtn" type="button" title="退出会议" aria-label="退出会议" hidden>
+        <svg viewBox="0 0 24 24" width="17" height="17"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
     </div>
 
@@ -78,28 +80,34 @@
 
     <div class="alert err" id="sendError" hidden></div>
   </section>
-
-  <!-- 取件 -->
-  <section class="card" id="getPanel" aria-label="取件">
-    <div class="card-head">
-      <h2><span class="dot dot-get"></span>取件</h2>
-    </div>
-
-    <form class="get-form" id="getForm">
-      <input id="getCode" class="code-input" placeholder="输入取件码" maxlength="5"
-             autocomplete="off" spellcheck="false" inputmode="numeric">
-      <button class="btn primary" id="getBtn" type="submit">取 件</button>
-    </form>
-
-    <div class="alert err" id="getError" hidden></div>
-
-    <div class="result" id="getResult" hidden>
-      <div class="pick-meta hint" id="pickMeta"></div>
-      <div class="pick-items" id="pickItems"></div>
-      <button class="btn ghost" id="pickAgainBtn">再取一个</button>
-    </div>
-  </section>
 </main>
+
+<!-- ===================== 聊天室设置（楼主） ===================== -->
+<div class="modal" id="settingsModal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>聊天室设置</h3>
+      <button class="iconbtn" id="setCloseBtn" type="button" title="关闭" aria-label="关闭">✕</button>
+    </div>
+    <label class="check">
+      <input id="setAllowReply" type="checkbox" checked>
+      <span>允许访客回消息</span>
+    </label>
+    <div class="field">
+      <span>消息保留时长</span>
+      <div class="expire-inline">
+        <select id="setExpireStyle" aria-label="保留时长单位">
+          <option value="hour">小时</option>
+          <option value="day" selected>天</option>
+          <option value="forever">永久</option>
+        </select>
+        <input id="setExpireValue" type="number" value="1" min="1" max="9999" aria-label="保留时长数值">
+      </div>
+    </div>
+    <p class="hint" id="setExpireHint"></p>
+    <button class="btn primary btn-block" id="setSaveBtn" type="button">保存设置</button>
+  </div>
+</div>
 
 <!-- ===================== 管理视图 ===================== -->
 <main class="layout admin" id="adminView" hidden>
@@ -115,7 +123,7 @@
     </form>
 
     <form id="setupForm" class="stack" hidden>
-      <p class="hint">首次使用，请设置管理密码（至少 8 位）。密码仅用于管理后台，收发分享不需要它。</p>
+      <p class="hint">首次使用，请设置管理密码（至少 8 位）。密码仅用于管理后台，聊天室不需要它。</p>
       <label class="field"><span>设置管理密码</span>
         <input type="password" id="setupPassword" autocomplete="new-password" placeholder="至少 8 位">
       </label>
@@ -138,11 +146,11 @@
       <summary>站点配置</summary>
       <form id="configForm" class="config-grid">
         <label class="field"><span>站点名称</span><input id="cfgName" maxlength="60"></label>
-        <label class="field span2"><span>站点描述</span><input id="cfgDesc" maxlength="200"></label>
+        <label class="field"><span>站点描述</span><input id="cfgDesc" maxlength="200"></label>
         <label class="field"><span>单文件上限 (MB)</span><input id="cfgMaxUpload" type="number" min="1" step="1"></label>
         <label class="field"><span>文本上限 (KB)</span><input id="cfgMaxText" type="number" min="1" step="1"></label>
         <label class="field"><span>分片大小 (MB)</span><input id="cfgChunk" type="number" min="1" step="1"></label>
-        <label class="field"><span>取件码类型</span>
+        <label class="field"><span>会议号类型</span>
           <select id="cfgCodeType">
             <option value="number">5 位数字</option>
             <option value="secret">5 位大写字母+数字</option>
@@ -153,18 +161,17 @@
         <label class="field"><span>限流次数（每窗口/IP，0=关闭）</span><input id="cfgRateCount" type="number" min="0" step="1"></label>
         <label class="field"><span>限流窗口（秒）</span><input id="cfgRateWindow" type="number" min="1" step="1"></label>
         <label class="field"><span>未完成分片保留（小时）</span><input id="cfgChunkExpire" type="number" min="1" step="1"></label>
-        <label class="check span2"><input id="cfgOpenUpload" type="checkbox"><span>开放匿名上传（关闭后仅管理员可发送）</span></label>
+        <label class="check span2"><input id="cfgOpenUpload" type="checkbox"><span>开放匿名使用（关闭后仅管理员可发言）</span></label>
         <div class="span2"><button class="btn primary" type="submit">保存配置</button></div>
       </form>
     </details>
 
     <details open>
-      <summary>分享记录</summary>
+      <summary>聊天室列表</summary>
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>取件码</th><th>类型</th><th>内容/文件名</th><th>大小</th>
-            <th>已取/剩余</th><th>到期时间</th><th></th>
+            <th>会议号</th><th>消息</th><th>概要</th><th>文件大小</th><th>成员</th><th>到期时间</th><th></th>
           </tr></thead>
           <tbody id="listBody"></tbody>
         </table>
@@ -179,7 +186,7 @@
 </main>
 
 <footer class="footer">
-  FileSender <span id="ver"></span> · 收发同页 · 全相对路径 · 反向代理子路径可用
+  FileSender <span id="ver"></span> · 聊天室 · 全相对路径 · 反向代理子路径可用
 </footer>
 
 <script src="app.js"></script>

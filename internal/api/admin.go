@@ -285,53 +285,53 @@ func (a *App) AdminList(c *gin.Context) {
 	if size > 100 {
 		size = 100
 	}
-	list, total, err := a.Store.ListCodes(c.Request.Context(), (page-1)*size, size)
+	rooms, total, err := a.Store.ListRooms(c.Request.Context(), (page-1)*size, size)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	codes := make([]string, 0, len(list))
-	for _, fc := range list {
-		codes = append(codes, fc.Code)
+	codes := make([]string, 0, len(rooms))
+	for _, r := range rooms {
+		codes = append(codes, r.Code)
 	}
-	itemsByCode, err := a.Store.ItemsForCodes(c.Request.Context(), codes)
+	msgsByRoom, err := a.Store.MessagesForRooms(c.Request.Context(), codes)
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 	now := models.Now()
-	items := make([]gin.H, 0, len(list))
-	for _, fc := range list {
-		shares := itemsByCode[fc.Code]
+	items := make([]gin.H, 0, len(rooms))
+	for _, r := range rooms {
 		var textCount, fileCount, totalSize int64
 		preview := ""
-		for _, it := range shares {
-			switch it.Type {
+		for _, m := range msgsByRoom[r.Code] {
+			switch m.Type {
 			case models.TypeText:
 				textCount++
 				if preview == "" {
-					preview = previewText(it.Text, 60)
+					preview = previewText(m.Text, 60)
 				}
 			case models.TypeFile:
 				fileCount++
-				totalSize += it.Size
+				totalSize += m.Size
 				if preview == "" {
-					preview = it.Filename
+					preview = m.Filename
 				}
 			}
 		}
+		memberCount, _ := a.Store.CountMembers(c.Request.Context(), r.Code)
 		items = append(items, gin.H{
-			"code":         fc.Code,
-			"item_count":   len(shares),
-			"text_count":   textCount,
-			"file_count":   fileCount,
-			"total_size":   totalSize,
-			"preview":      preview,
-			"expire_at":    fc.ExpireAt,
-			"expire_count": fc.ExpireCount,
-			"used_count":   fc.UsedCount,
-			"created_at":   fc.CreatedAt,
-			"expired":      fc.IsExpired(now),
+			"code":        r.Code,
+			"msg_count":   textCount + fileCount,
+			"text_count":  textCount,
+			"file_count":  fileCount,
+			"total_size":  totalSize,
+			"members":     memberCount,
+			"preview":     preview,
+			"allow_reply": r.AllowReply,
+			"expire_at":   r.ExpireAt,
+			"created_at":  r.CreatedAt,
+			"expired":     r.IsExpired(now),
 		})
 	}
 	ok(c, gin.H{"total": total, "page": page, "page_size": size, "items": items})
@@ -339,20 +339,20 @@ func (a *App) AdminList(c *gin.Context) {
 
 func (a *App) AdminDelete(c *gin.Context) {
 	code := normalizeCode(c.Param("code"))
-	if _, err := a.Store.GetByCode(c.Request.Context(), code); errors.Is(err, store.ErrNotFound) {
+	if _, err := a.Store.GetRoom(c.Request.Context(), code); errors.Is(err, store.ErrNotFound) {
 		fail(c, http.StatusNotFound, "记录不存在")
 		return
 	}
-	// 先删文件，再级联删条目和头
-	items, err := a.Store.ListShareItems(c.Request.Context(), code)
+	// 先删文件，再级联删消息、成员和房间
+	msgs, err := a.Store.ListMessages(c.Request.Context(), code, 0, models.MaxMessagesPerRoom+1)
 	if err == nil {
-		for _, it := range items {
-			if it.Type == models.TypeFile && it.StoragePath != "" {
-				_ = a.Storage.Delete(it.StoragePath)
+		for _, m := range msgs {
+			if m.Type == models.TypeFile && m.StoragePath != "" {
+				_ = a.Storage.Delete(m.StoragePath)
 			}
 		}
 	}
-	if err := a.Store.DeleteShareCascade(c.Request.Context(), code); err != nil {
+	if err := a.Store.DeleteRoomCascade(c.Request.Context(), code); err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}

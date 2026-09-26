@@ -10,30 +10,44 @@ import (
 )
 
 const schema = `
-CREATE TABLE IF NOT EXISTS file_codes (
-	id           INTEGER PRIMARY KEY AUTOINCREMENT,
-	code         TEXT    NOT NULL UNIQUE,
-	expire_at    INTEGER NOT NULL DEFAULT 0,
-	expire_count INTEGER NOT NULL DEFAULT -1,
-	used_count   INTEGER NOT NULL DEFAULT 0,
-	created_at   INTEGER NOT NULL
+-- 聊天室（会议号即原取件码）
+CREATE TABLE IF NOT EXISTS rooms (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	code        TEXT    NOT NULL UNIQUE,
+	expire_at   INTEGER NOT NULL DEFAULT 0,   -- unix 秒；0 = 永久
+	allow_reply INTEGER NOT NULL DEFAULT 1,   -- 访客可否回消息
+	created_at  INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_file_codes_expire_at ON file_codes(expire_at);
-CREATE INDEX IF NOT EXISTS idx_file_codes_created_at ON file_codes(created_at);
+CREATE INDEX IF NOT EXISTS idx_rooms_expire_at ON rooms(expire_at);
 
--- 一个取件码可包含多条内容（文本/文件），生成后仍可追加。
-CREATE TABLE IF NOT EXISTS share_items (
-	id           INTEGER PRIMARY KEY AUTOINCREMENT,
-	share_code   TEXT    NOT NULL,
-	type         TEXT    NOT NULL,
-	text         TEXT    NOT NULL DEFAULT '',
-	storage_path TEXT    NOT NULL DEFAULT '',
-	filename     TEXT    NOT NULL DEFAULT '',
-	size         INTEGER NOT NULL DEFAULT 0,
-	file_hash    TEXT    NOT NULL DEFAULT '',
-	created_at   INTEGER NOT NULL
+-- 成员：楼主与访客各持随机令牌
+CREATE TABLE IF NOT EXISTS members (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	room_code  TEXT    NOT NULL,
+	role       TEXT    NOT NULL,               -- 'owner' | 'guest'
+	guest_no   INTEGER NOT NULL DEFAULT 0,     -- 访客编号（楼主为 0）
+	token      TEXT    NOT NULL,
+	created_at INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_share_items_code ON share_items(share_code);
+CREATE INDEX IF NOT EXISTS idx_members_room ON members(room_code);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_members_token ON members(token);
+
+-- 消息（文字 / 文件）
+CREATE TABLE IF NOT EXISTS messages (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	room_code   TEXT    NOT NULL,
+	member_id   INTEGER NOT NULL,
+	role        TEXT    NOT NULL,               -- 'owner' | 'guest'
+	sender      TEXT    NOT NULL,               -- '楼主' | '访客N'
+	type        TEXT    NOT NULL,               -- 'text' | 'file'
+	text        TEXT    NOT NULL DEFAULT '',
+	storage_path TEXT   NOT NULL DEFAULT '',
+	filename    TEXT    NOT NULL DEFAULT '',
+	size        INTEGER NOT NULL DEFAULT 0,
+	file_hash   TEXT    NOT NULL DEFAULT '',
+	created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_room ON messages(room_code, id);
 
 CREATE TABLE IF NOT EXISTS chunk_sessions (
 	upload_id    TEXT PRIMARY KEY,
@@ -85,55 +99,85 @@ func Open(dataDir string) (*sql.DB, error) {
 		gdb.Close()
 		return nil, fmt.Errorf("初始化表结构失败: %w", err)
 	}
-	if err := migrateLegacySingleItemSchema(gdb); err != nil {
+	if err := migrateLegacy(gdb); err != nil {
 		gdb.Close()
 		return nil, fmt.Errorf("迁移旧数据失败: %w", err)
 	}
 	return gdb, nil
 }
 
-// migrateLegacySingleItemSchema upgrades a pre-1.1 database where file_codes
-// itself held one text/file payload (columns type/text/storage_path/...).
-// Old rows become share_items; the header table is rebuilt without them.
-func migrateLegacySingleItemSchema(gdb *sql.DB) error {
-	legacy, err := hasColumn(gdb, "file_codes", "type")
-	if err != nil || !legacy {
+// migrateLegacy upgrades pre-0.2 databases:
+//   - v0.1 "share_items" model (file_codes + share_items)
+//   - v0.0 single-item model (file_codes with type/text columns)
+//
+// Everything becomes a room with one owner member whose token is lost
+// (historic shares are read-only: guests can join and view/download).
+func migrateLegacy(gdb *sql.DB) error {
+	hasRooms, err := hasTable(gdb, "rooms")
+	if err != nil {
 		return err
 	}
+	hasFC, err := hasTable(gdb, "file_codes")
+	if err != nil {
+		return err
+	}
+	if !hasFC {
+		return nil // fresh database
+	}
+	if hasRooms {
+		// Already migrated (rooms exist but file_codes left behind) → drop legacy.
+		if _, err := gdb.Exec(`DROP TABLE IF EXISTS file_codes`); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	legacySingle, _ := hasColumn(gdb, "file_codes", "type")
 	tx, err := gdb.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	stmts := []string{
-		`INSERT INTO share_items
-			(share_code, type, text, storage_path, filename, size, file_hash, created_at)
-		 SELECT code, type, text, storage_path, filename, size, file_hash, created_at
-		   FROM file_codes WHERE type IN ('text','file')`,
-		`ALTER TABLE file_codes RENAME TO file_codes_legacy`,
-		`CREATE TABLE file_codes (
-			id           INTEGER PRIMARY KEY AUTOINCREMENT,
-			code         TEXT    NOT NULL UNIQUE,
-			expire_at    INTEGER NOT NULL DEFAULT 0,
-			expire_count INTEGER NOT NULL DEFAULT -1,
-			used_count   INTEGER NOT NULL DEFAULT 0,
-			created_at   INTEGER NOT NULL
-		)`,
-		`INSERT INTO file_codes (code, expire_at, expire_count, used_count, created_at)
-		 SELECT code, expire_at, expire_count, used_count, created_at FROM file_codes_legacy`,
-		`DROP TABLE file_codes_legacy`,
-	}
-	for _, q := range stmts {
-		if _, err := tx.Exec(q); err != nil {
-			return fmt.Errorf("迁移步骤失败: %w", err)
+	if legacySingle {
+		// v0.0：payload 直接在 file_codes 上
+		if _, err := tx.Exec(`INSERT INTO messages
+			(room_code, member_id, role, sender, type, text, storage_path, filename, size, file_hash, created_at)
+			SELECT code, 0, 'owner', '楼主', type, text, storage_path, filename, size, file_hash, created_at
+			  FROM file_codes WHERE type IN ('text','file')`); err != nil {
+			return err
 		}
+	} else {
+		// v0.1：file_codes + share_items
+		if _, err := tx.Exec(`INSERT INTO messages
+			(room_code, member_id, role, sender, type, text, storage_path, filename, size, file_hash, created_at)
+			SELECT share_code, 0, 'owner', '楼主', type, text, storage_path, filename, size, file_hash, created_at
+			  FROM share_items`); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO rooms (code, expire_at, allow_reply, created_at)
+		SELECT code, expire_at, 1, created_at FROM file_codes
+		 WHERE EXISTS (SELECT 1 FROM messages WHERE messages.room_code = file_codes.code)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE file_codes`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE IF EXISTS share_items`); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	fmt.Println("已将旧版单条目数据迁移为多内容分享结构")
+	fmt.Println("已将旧版分享数据迁移为聊天室结构（历史分享为只读，无楼主令牌）")
 	return nil
+}
+
+func hasTable(gdb *sql.DB, name string) (bool, error) {
+	var n int
+	err := gdb.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&n)
+	return n > 0, err
 }
 
 func hasColumn(gdb *sql.DB, table, column string) (bool, error) {

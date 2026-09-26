@@ -1,184 +1,105 @@
 # FileSender
 
-基于 [FileCodeBox](https://github.com/vastsa/FileCodeBox) 的 Go 语言重写版 —— 用取件码收发文本与文件。
-编译后是**单个静态二进制**（前端已内嵌，数据库用纯 Go 的 SQLite 驱动），没有任何运行时依赖。
+基于 [FileCodeBox](https://github.com/vastsa/FileCodeBox) 思路的 Go 语言重写版，并演进为**聊天室**形态 ——
+用「会议号」开一间可收发**文字与文件**的临时聊天室。编译后是**单个静态二进制**（前端已内嵌，数据库用纯 Go 的 SQLite 驱动），没有任何运行时依赖。
 
-相对原版 FileCodeBox 的三个核心改进：
+## 使用方式
 
-| # | 改进 | 说明 |
-|---|------|------|
-| 1 | **发送与取件同页** | 单页双栏布局，一侧"生成取件码"、一侧"输码取件"，`#/c/取件码` 链接打开自动取件 |
-| 2 | **前端全相对路径** | 所有请求都是相对当前页面的 `api/...`，服务端永不生成绝对 URL，反代子路径/任意端口开箱即用 |
-| 3 | **反代大文件上传修复** | 分片上传默认开启（5MB/片，可配置），避开 `client_max_body_size` 与代理缓冲问题；支持断点续传、整文件 sha256 校验 |
+1. 打开首页就是一个微信式聊天窗口：输入第一条消息（或发第一个文件）即**自动创建会议号**，你就是**楼主**
+2. 把会议号（或邀请链接）分享给任何人，他们在输入框输入会议号、或打开链接即可加入，成为**访客1、访客2…**（人数不限）
+3. 楼主与所有访客共用一个聊天窗口：文字气泡、文件卡片、图片缩略图（点击放大），大家都能下载文件
+4. 楼主可随时打开「设置」：
+   - **允许访客回消息**（默认开启；关闭后访客输入框禁用）
+   - **消息保留时长**（默认 1 天，可改小时/天/永久；到期后整个聊天室与文件自动删除）
 
-## 功能
+## 主要特性
 
-- **聊天式发送**：一个输入框混搭文字与多文件（📎/拖拽/粘贴），生成取件码后**可继续追加内容**，同一批内容共用一个取件码
-- 取件侧按条目展示：文本气泡 + 文件卡片（各自独立下载）
-- 5 位取件码（纯数字或去混淆的大写字母+数字）
-- 过期策略：天 / 小时 / 分钟 / 可取次数 / 永久（可设全局有效期上限）；**打开取件即计次**，取件后的下载不再计次
-- 分片上传：并发、失败退避重试、刷新页面后断点续传、分片与整文件 sha256 校验
-- 下载支持 HTTP Range（断点续传下载），响应强制 `Content-Disposition: attachment`
-- 精简管理后台（`#/admin`）：首次进入设置管理密码；站点配置在线修改、分享记录列表/删除
-- IP 限流（滑动窗口，次数设 0 可关闭）、文件类型白名单、上传大小限制
-- 后台协程自动清理过期分享、未完成的分片会话与孤儿分片
-- 配置存 SQLite，重启保留；SQLite 为 WAL 模式 + 单连接，免运维
+- **聊天室**：楼主/访客双角色、双向气泡（自己右侧绿、他人左侧白 + 群名片）、2.5s 轮询近实时刷新
+- **文件收发**：📎/拖拽/粘贴即自动上传；分片上传（默认 5MB/片）带字节级进度条与网速；断点续传；sha256 校验
+- **图片预览**：jpg/png/gif/webp/bmp/svg/avif 自动缩略图，单击灯箱放大、可下载原图
+- **反代友好**：前端全相对路径、服务端永不生成绝对 URL，子路径/任意端口开箱即用（分片避开 body 限制）
+- **下载鉴权**：文件仅房间成员可下载（令牌随 URL 传递，支持 header 或 query）
+- **自动清理**：后台协程删除过期房间（含全部消息与文件）、未完成分片、空房间
+- **管理后台**（`#/admin`）：首次设置管理密码；站点配置在线修改、聊天室列表/删除
+- 主题切换（明/暗，默认明）、IP 限流（0=关闭）、类型白名单、大小限制
 
 ## 快速开始
 
 ```bash
-# 构建（Go ≥ 1.22）
 go build -o filesender ./cmd/filesender
-
-# 运行
 ./filesender -port 12345 -data ./data
 ```
 
-打开 `http://127.0.0.1:12345` 即可使用。首次进入管理页（右上角"管理"）设置管理密码完成初始化——**收发分享本身不需要密码**，管理密码只保护后台。
-
-### 启动参数 / 环境变量
-
 | flag | 环境变量 | 默认 | 说明 |
 |------|---------|------|------|
-| `-port` | `PORT` | `12345` | 监听端口 |
+| `-port` | `PORT` | `12345` | 监听端口（默认绑定 0.0.0.0） |
 | `-data` | `DATA_DIR` | `./data` | 数据目录（数据库/文件/配置） |
-| `-trusted-proxies` | `TRUSTED_PROXIES` | 空 | 可信反代网段（逗号分隔 CIDR）。留空则不信任任何 `X-Forwarded-*` 头（限流/日志用 TCP 对端地址） |
-| `-debug` | `DEBUG=1` | 关 | gin 调试日志 |
+| `-trusted-proxies` | `TRUSTED_PROXIES` | 空 | 可信反代网段（逗号分隔 CIDR） |
+| `-debug` | `DEBUG=1` | 关 | 调试日志 |
 
-### 运行时可改配置（管理后台）
-
-站点名称/描述、开放匿名上传、单文件上限（默认 1GB）、文本上限（默认 1MB）、
-分片大小（默认 5MB）、取件码类型、类型白名单、有效期上限、限流参数、分片保留时长。
-
-## 反向代理部署（重点）
-
-得益于全相对路径 + 分片上传，**子路径、不同端口都可以**，无需改任何代码或配置：
-
-### nginx —— 子路径 + 不同端口
+## 反向代理（子路径 + 任意端口）
 
 ```nginx
 server {
-    listen 443 ssl;                      # 对外端口与后端不同也完全没问题
-    server_name filesender.example.com;
+    listen 443 ssl;
+    server_name chat.example.com;
 
-    location /filesender/ {              # 子路径部署
+    location /chat/ {
         proxy_pass http://127.0.0.1:12345/;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-
-        # 分片上传每片默认 5MB，body 限制只需略大于分片即可（不必放开到整个文件大小）
-        client_max_body_size 6m;
+        client_max_body_size 6m;   # 略大于分片即可
     }
 }
 ```
 
-访问 `https://filesender.example.com/filesender/` 即可。
-原理：前端从 `/filesender/` 页面发起 `api/...` 相对请求 → 浏览器自动解析为 `/filesender/api/...` → nginx 去掉前缀转发。访问不带斜杠的 `/filesender` 时服务端会 301 补斜杠。
-
-> 注意：即便忘了配 `client_max_body_size`（nginx 默认 1m），把分片大小在管理后台调到 ≤1MB 依然能正常传大文件——这正是分片设计对反代友好的意义。
-
-### nginx —— 域名根路径
-
-```nginx
-location / {
-    proxy_pass http://127.0.0.1:12345;
-    proxy_set_header Host $host;
-    client_max_body_size 6m;
-}
-```
-
-### Caddy
-
-```caddyfile
-filesender.example.com {
-    handle_path /filesender/* {
-        reverse_proxy 127.0.0.1:12345
-    }
-    # 或根路径： reverse_proxy 127.0.0.1:12345
-}
-```
-
-如果部署在反代后并希望限流/日志记录真实客户端 IP，把代理网段传给服务端：
-
-```bash
-./filesender -trusted-proxies 127.0.0.1,10.0.0.0/8
-```
+访问 `https://chat.example.com/chat/` 即可；带 `X-Forwarded-For` 的真实 IP 需 `-trusted-proxies` 指定代理网段。
 
 ## API 一览
 
-响应统一为 `{"code": http状态码, "message": "ok|错误信息", "data": {...}}`；
-`data` 中的下载链接一律为相对路径（`./api/download/...`）。
+响应统一 `{"code": http状态码, "message": "ok|错误", "data": {...}}`；文件 URL 一律相对路径。
+房间成员令牌：`X-Room-Token` header（fetch 场景）或 `?token=`（`<img>`/`<a>` 场景）。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `api/config` | 公开站点参数 |
-| POST | `api/send/text` | 发文本 `{text, expire_value?, expire_style?, code?}`；带 `code` 即追加 |
-| POST | `api/send/file` | 发文件（multipart：`file` 可多个 + `code`? + 过期字段），适合小文件/curl |
-| POST | `api/upload/init` | 分片上传初始化 `{file_name, file_size, file_hash?}`，同指纹自动续传 |
-| PUT | `api/upload/{id}/{n}` | 上传第 n 片（raw body，可选 `X-Chunk-Hash`） |
-| GET | `api/upload/{id}/status` | 已传分片查询（断点续传） |
-| POST | `api/upload/{id}/complete` | 合并；`{code?}` 追加到已有分享，否则创建 |
-| POST/GET | `api/get` | 输码取件：**计次**，返回全部条目（文本内容+文件列表） |
-| GET | `api/download/{code}/{item}` | 下载指定条目（不计次；支持 Range） |
-| GET | `api/download/{code}` | 兼容：下载第一个内容 |
-| GET | `api/admin/status` | 是否已初始化 |
-| POST | `api/admin/setup` | 首次设置管理密码 |
-| POST | `api/admin/login` | 登录（Bearer token，30 天） |
-| GET/PUT | `api/admin/config` | 读取/修改运行时配置（限流次数 0=关闭） |
-| GET | `api/admin/list` | 分享记录（分页，含条目聚合） |
-| DELETE | `api/admin/share/{code}` | 删除分享（级联删除全部条目与文件） |
+| POST | `api/room/create` | 楼主首条文字消息建房 `{text, expire_value, expire_style}` → `{room, token, member, message}` |
+| POST | `api/room/join/{code}` | 加入（带有效 token 返回原身份，否则分配新访客编号） |
+| GET | `api/room/{code}/messages?after=N` | 轮询拉取消息（增量）+ 房间状态 + 自身身份 |
+| POST | `api/room/{code}/send/text` | 发文字 `{token, text}` |
+| POST | `api/room/send/file` | 发文件（multipart：`code`/`token`/`file`，无 code 即建房） |
+| GET | `api/room/{code}/messages/{msg}/file` | 消息文件下载；图片可 `?inline=1`（仅成员） |
+| GET/PUT | `api/room/{code}/settings` | 楼主读写设置：`allow_reply`、`expire_style/expire_value` |
+| POST | `api/upload/init` / PUT `api/upload/{id}/{n}` / POST `api/upload/{id}/complete` / GET `api/upload/{id}/status` | 分片上传（complete 带 `{code, token}` 入房） |
+| GET | `api/admin/*` | 管理后台（status/setup/login/config/list/room 删除） |
 
 示例：
 
 ```bash
-# 发文本（生成新取件码）
-curl -X POST http://127.0.0.1:12345/api/send/text \
+# 楼主建房
+R=$(curl -s -X POST http://127.0.0.1:12345/api/room/create \
   -H 'Content-Type: application/json' \
-  -d '{"text":"hello","expire_value":1,"expire_style":"day"}'
+  -d '{"text":"大家好","expire_value":1,"expire_style":"day"}')
+CODE=$(echo $R | jq -r .data.room.code)
+TOKEN=$(echo $R | jq -r .data.token)
 
-# 追加文本到已有分享（共用取件码）
-curl -X POST http://127.0.0.1:12345/api/send/text \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"再来一条","code":"12345"}'
+# 访客加入
+curl -s -X POST http://127.0.0.1:12345/api/room/join/$CODE
 
-# 发文件（小文件直传，可一次多个）
-curl -X POST http://127.0.0.1:12345/api/send/file \
-  -F "code=12345" -F "file=@报告.pdf" -F "file=@说明.txt"
+# 楼主发文件
+curl -s -X POST http://127.0.0.1:12345/api/room/send/file \
+  -F "code=$CODE" -F "token=$TOKEN" -F "file=@报告.pdf"
 
-# 取件（返回全部条目）
-curl -X POST http://127.0.0.1:12345/api/get \
-  -H 'Content-Type: application/json' -d '{"code":"12345"}'
+# 拉取消息（轮询 after=已见最大消息 id）
+curl -s "http://127.0.0.1:12345/api/room/$CODE/messages?after=0" -H "X-Room-Token: $TOKEN"
 ```
 
-## 目录结构
+## 数据结构
 
-```
-filesender/
-├── cmd/filesender/main.go   # 入口：flag/env、优雅关闭
-├── internal/
-│   ├── db/                  # SQLite 初始化 + schema
-│   ├── config/              # 默认配置 + keyvalue 持久化（管理后台可改）
-│   ├── models/              # FileCode / ChunkSession
-│   ├── store/               # DAO：取件码生成、原子扣减、分片会话
-│   ├── storage/             # Storage 接口 + 本地磁盘实现（流式、防路径穿越）
-│   ├── api/                 # handlers：send/get/upload/admin + 限流/CORS
-│   ├── janitor/             # 过期清理协程
-│   └── web/                 # embed 前端 + SPA fallback + 子路径 301
-└── internal/web/static/     # 单页前端（原生 HTML/CSS/JS，无构建步骤）
-```
+所有状态都在 `-data` 目录：`filesender.db`（rooms/members/messages/settings）、`share/`（文件）、`chunks/`（未完成分片）。停机整目录拷贝即备份。
 
-## 与原版 FileCodeBox 的主要差异
+## 与原版 FileCodeBox 的差异
 
-- Go 单二进制，前端内嵌，无 Python/Node 运行时
-- 发送/取件同页；前端全相对路径，支持任意反代子路径
-- 分片上传默认开启（原版默认关闭），规避反代 body 限制导致的"必须同端口"问题
-- 一个取件码对应一个可追加的内容包（多条文本 + 多个文件），原版一码只对应一条内容
-- 取件码字符集去掉 `0/O/1/I`，避免手抄混淆
-- 次数型分享的有效期兜底从 1 天放宽为可配置的全局上限（默认 7 天）
-- 计次发生在"打开取件"时（原版文本取一次、文件下载又计一次）
-- 未实现：多存储后端（S3/OneDrive/WebDAV/OpenDAL，接口已预留）、多语言界面
-
-## 数据备份
-
-所有状态都在 `-data` 指向的目录：`filesender.db`（数据库）、`share/`（文件）、`chunks/`（未完成分片）。
-停机状态下整目录拷贝即可完成备份。
+- 形态从"单条分享"演进为"聊天室"：会议号=原取件码，楼主/访客多对多收发
+- Go 单二进制、前端内嵌、全相对路径、分片上传默认开启（原版关闭）
+- 未实现：WebSocket 推送（现为 2.5s 轮询）、多存储后端（接口已预留）、多语言
