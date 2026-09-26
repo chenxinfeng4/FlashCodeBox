@@ -34,17 +34,36 @@ func Start(ctx context.Context, cfg *config.Manager, st *store.Store, sto storag
 func sweep(cfg *config.Manager, st *store.Store, sto storage.Storage, chunkDir string) {
 	now := models.Now()
 
-	// 1. Expired shares: drop the payload, then the row.
-	if expired, err := st.DeleteExpired(context.Background(), now); err != nil {
-		log.Printf("[janitor] 清理过期分享失败: %v", err)
+	// 1. Expired shares: delete every item payload first, then cascade rows.
+	if expired, err := st.ExpiredShares(context.Background(), now); err != nil {
+		log.Printf("[janitor] 查询过期分享失败: %v", err)
 	} else {
 		for _, fc := range expired {
-			if fc.Type == models.TypeFile && fc.StoragePath != "" {
-				if err := sto.Delete(fc.StoragePath); err != nil {
-					log.Printf("[janitor] 删除过期文件失败 %s: %v", fc.StoragePath, err)
+			items, err := st.ListShareItems(context.Background(), fc.Code)
+			if err != nil {
+				log.Printf("[janitor] 读取分享条目失败 %s: %v", fc.Code, err)
+			}
+			for _, it := range items {
+				if it.Type == models.TypeFile && it.StoragePath != "" {
+					if err := sto.Delete(it.StoragePath); err != nil {
+						log.Printf("[janitor] 删除过期文件失败 %s: %v", it.StoragePath, err)
+					}
 				}
 			}
-			log.Printf("[janitor] 已清理过期分享 %s", fc.Code)
+			if err := st.DeleteShareCascade(context.Background(), fc.Code); err != nil {
+				log.Printf("[janitor] 级联删除分享失败 %s: %v", fc.Code, err)
+			} else {
+				log.Printf("[janitor] 已清理过期分享 %s（%d 条内容）", fc.Code, len(items))
+			}
+		}
+	}
+
+	// 1.5 Empty shares (process died before first item landed).
+	if codes, err := st.DeleteEmptyShares(context.Background(), now-3600); err != nil {
+		log.Printf("[janitor] 清理空分享失败: %v", err)
+	} else {
+		for _, code := range codes {
+			log.Printf("[janitor] 已清理空分享 %s", code)
 		}
 	}
 

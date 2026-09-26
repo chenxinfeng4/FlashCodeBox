@@ -3,7 +3,8 @@
  * 设计约束：
  *  1) 所有请求一律使用相对路径（"api/..."），部署在任意反代子路径下都成立
  *  2) 发送与取件同页，hash 路由：#/c/取件码、#/admin
- *  3) 大文件默认走分片上传（并发 3、失败退避重试、断点续传）
+ *  3) 发送区是聊天式输入框：文字 + 多文件混搭，生成取件码后可继续追加
+ *  4) 大文件默认走分片上传（并发 3、失败退避重试、断点续传）
  * ============================================================ */
 'use strict';
 
@@ -11,9 +12,12 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   config: null,
-  file: null,
-  sending: false,
-  tab: 'text',
+  composer: {
+    code: null,      // 当前分享的取件码（null = 尚未生成）
+    items: [],       // 已放入分享的内容（本地展示用）
+    pending: [],     // 待发送的文件（File 对象）
+    sending: false,
+  },
   adminPage: 1,
 };
 
@@ -104,103 +108,145 @@ async function sha256Hex(blob) {
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/* ---------------- 发送：文本 ---------------- */
+/* ---------------- 发送：聊天式输入框 ---------------- */
 
-$('sendText').addEventListener('input', () => {
-  $('textCount').textContent = humanBytes(new Blob([$('sendText').value]).size);
-});
+function autogrow() {
+  const el = $('sendText');
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 180) + 'px';
+}
+$('sendText').addEventListener('input', autogrow);
 
-/* ---------------- 发送：文件 ---------------- */
+function fileKey(file) { return `${file.name}:${file.size}:${file.lastModified}`; }
 
-function setFile(file) {
-  if (!file) return;
+function validateFile(file) {
   if (state.config && file.size > state.config.max_upload_size) {
-    showError('sendError', `文件超过大小限制（最大 ${humanBytes(state.config.max_upload_size)}）`);
-    return;
+    return `文件超过大小限制（最大 ${humanBytes(state.config.max_upload_size)}）`;
   }
+  if (state.config && !typesAllowed(file.name)) {
+    return '文件类型不被允许';
+  }
+  return null;
+}
+
+function typesAllowed(name) {
+  const list = (state.config && state.config.allowed_types) || ['*'];
+  if (list.includes('*')) return true;
+  const i = name.lastIndexOf('.');
+  if (i < 0) return false;
+  return list.includes(name.slice(i + 1).toLowerCase());
+}
+
+function addPendingFiles(files) {
   hideError('sendError');
-  state.file = file;
-  $('fileChipName').textContent = file.name;
-  $('fileChipSize').textContent = humanBytes(file.size);
-  $('fileChip').hidden = false;
-  $('dropzone').hidden = true;
-  if (state.tab !== 'file') document.querySelector('.tab[data-tab="file"]').click();
+  for (const f of files) {
+    if (f.size === 0) { showError('sendError', `「${f.name}」是空文件，已跳过`); continue; }
+    const err = validateFile(f);
+    if (err) { showError('sendError', `「${f.name}」：${err}，已跳过`); continue; }
+    if (state.composer.pending.some((p) => fileKey(p) === fileKey(f))) continue;
+    if (state.composer.pending.length + 1 > 100) {
+      showError('sendError', '单次最多添加 100 个文件');
+      break;
+    }
+    state.composer.pending.push(f);
+  }
+  renderPending();
 }
 
-function clearFile() {
-  state.file = null;
-  $('fileChip').hidden = true;
-  $('dropzone').hidden = false;
-  $('fileInput').value = '';
+function renderPending() {
+  const wrap = $('attachList');
+  wrap.textContent = '';
+  state.composer.pending.forEach((f, idx) => {
+    const chip = document.createElement('span');
+    chip.className = 'attchip';
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', '14');
+    svg.setAttribute('height', '14');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', 'M14 3v5h5M6 3h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5a2 2 0 012-2z');
+    path.setAttribute('stroke', 'currentColor');
+    path.setAttribute('stroke-width', '1.8');
+    path.setAttribute('fill', 'none');
+    svg.appendChild(path);
+    chip.appendChild(svg);
+
+    const name = document.createElement('span');
+    name.className = 'attchip-name';
+    name.textContent = f.name;
+    name.title = `${f.name}（${humanBytes(f.size)}）`;
+    chip.appendChild(name);
+
+    const size = document.createElement('span');
+    size.className = 'hint';
+    size.textContent = humanBytes(f.size);
+    chip.appendChild(size);
+
+    const del = document.createElement('button');
+    del.className = 'iconbtn';
+    del.textContent = '✕';
+    del.title = '移除';
+    del.addEventListener('click', () => {
+      state.composer.pending.splice(idx, 1);
+      renderPending();
+    });
+    chip.appendChild(del);
+
+    wrap.appendChild(chip);
+  });
 }
 
-$('fileClear').addEventListener('click', clearFile);
+function clearPending() {
+  state.composer.pending = [];
+  renderPending();
+}
 
+$('attachBtn').addEventListener('click', () => $('fileInput').click());
 $('fileInput').addEventListener('change', () => {
-  const file = $('fileInput').files && $('fileInput').files[0];
-  if (file) setFile(file);
+  addPendingFiles(Array.from($('fileInput').files || []));
+  $('fileInput').value = '';
 });
 
-$('dropzone').addEventListener('click', () => $('fileInput').click());
-$('dropzone').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' || e.key === ' ') $('fileInput').click();
-});
+// 拖拽文件到输入框
+const composer = $('composer');
 ['dragover', 'dragenter'].forEach((ev) =>
-  $('dropzone').addEventListener(ev, (e) => { e.preventDefault(); $('dropzone').classList.add('dragover'); }));
+  composer.addEventListener(ev, (e) => { e.preventDefault(); composer.classList.add('dragover'); }));
 ['dragleave', 'drop'].forEach((ev) =>
-  $('dropzone').addEventListener(ev, (e) => { e.preventDefault(); $('dropzone').classList.remove('dragover'); }));
-$('dropzone').addEventListener('drop', (e) => {
-  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-  if (file) setFile(file);
+  composer.addEventListener(ev, (e) => { e.preventDefault(); composer.classList.remove('dragover'); }));
+composer.addEventListener('drop', (e) => {
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if (files && files.length) addPendingFiles(Array.from(files));
 });
-
 // 拖到页面其他位置也别让浏览器直接打开文件
 document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', (e) => e.preventDefault());
 
-// 粘贴文件（文件页签下）
+// 粘贴文件（文字粘贴走 textarea 原生行为）
 document.addEventListener('paste', (e) => {
-  if (state.tab !== 'file') return;
   const files = e.clipboardData && e.clipboardData.files;
   if (files && files.length) {
     e.preventDefault();
-    setFile(files[0]);
+    addPendingFiles(Array.from(files));
   }
-});
-
-/* ---------------- 选项卡 ---------------- */
-
-document.querySelectorAll('.tab').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === btn));
-    state.tab = btn.dataset.tab;
-    $('paneText').hidden = state.tab !== 'text';
-    $('paneFile').hidden = state.tab !== 'file';
-    hideError('sendError');
-  });
-});
-
-/* ---------------- 有效期控件 ---------------- */
-
-$('expireStyle').addEventListener('change', () => {
-  const forever = $('expireStyle').value === 'forever';
-  $('expireValue').hidden = forever;
-  $('expireValue').parentElement.title = forever ? '' : '数量（天 / 小时 / 分钟 / 次数）';
 });
 
 /* ---------------- 分片上传 ---------------- */
 
-function fileKey(file) { return `${file.name}:${file.size}:${file.lastModified}`; }
-
-function updateProgress(done, total, startTime) {
+function updateProgress(done, total, startTime, label) {
   const pct = total ? Math.round((done / total) * 100) : 0;
   $('progressBar').style.width = pct + '%';
-  $('progressText').textContent = `${humanBytes(done)} / ${humanBytes(total)}（${pct}%）`;
+  $('progressText').textContent = (label ? label + ' · ' : '') +
+    `${humanBytes(done)} / ${humanBytes(total)}（${pct}%）`;
   const sec = (Date.now() - startTime) / 1000;
   if (sec > 0.5) $('progressSpeed').textContent = humanBytes(done / sec) + '/s';
 }
 
-async function uploadFile(file, expire) {
+/**
+ * 分片上传一个文件并追加到分享。
+ * @param code 现有取件码；为空时由 complete 的 expire 参数创建新分享
+ */
+async function uploadFile(file, expire, code) {
   // 1) 初始化或续传：localStorage 里存着上次未完成的 upload_id
   let session = null;
   const savedId = localStorage.getItem('fs_up_' + fileKey(file));
@@ -225,7 +271,7 @@ async function uploadFile(file, expire) {
   const startTime = Date.now();
   let completedBytes = 0;
   uploaded.forEach((i) => { completedBytes += Math.min(chunk_size, file.size - i * chunk_size); });
-  updateProgress(completedBytes, file.size, startTime);
+  updateProgress(completedBytes, file.size, startTime, file.name);
 
   let next = 0;
   let failure = null;
@@ -266,117 +312,211 @@ async function uploadFile(file, expire) {
       }
       uploaded.add(i);
       completedBytes += blob.size;
-      updateProgress(completedBytes, file.size, startTime);
+      updateProgress(completedBytes, file.size, startTime, file.name);
     }
   }
   await Promise.all(Array.from({ length: WORKERS }, worker));
   if (failure) throw failure;
 
-  // 3) 合并并创建分享
-  const result = await apiFetch(`api/upload/${encodeURIComponent(upload_id)}/complete`, {
-    json: { expire_value: expire.value, expire_style: expire.style },
-  });
+  // 3) 合并并追加到分享
+  const body = {};
+  if (code) body.code = code;
+  else { body.expire_value = expire.value; body.expire_style = expire.style; }
+  const result = await apiFetch(`api/upload/${encodeURIComponent(upload_id)}/complete`, { json: body });
   localStorage.removeItem('fs_up_' + fileKey(file));
   return result;
 }
 
-/* ---------------- 发送主流程 ---------------- */
+/* ---------------- 发送主流程：可反复追加 ---------------- */
 
-function setSending(on) {
-  state.sending = on;
-  $('sendBtn').disabled = on;
-  $('sendBtn').textContent = on ? '处理中…' : '生成取件码';
-}
-
-function showSendResult(data) {
-  $('resultCode').textContent = data.code;
-  const lines = [expireText(data)];
-  if (data.type === 'file') lines.unshift(`${data.filename} · ${humanBytes(data.size)}`);
-  else lines.unshift('文本分享');
-  $('resultMeta').textContent = lines.join(' · ');
-  $('sendResult').hidden = false;
-  $('progress').hidden = true;
-  $('copyCodeBtn').onclick = async () => {
-    (await copyText(data.code)) && flashButton($('copyCodeBtn'), '已复制 ✓');
-  };
-  $('copyLinkBtn').onclick = async () => {
-    const link = location.origin + location.pathname.replace(/index\.html$/, '') + '#/c/' + data.code;
-    (await copyText(link)) && flashButton($('copyLinkBtn'), '已复制 ✓');
-  };
-}
-
-async function doSend() {
-  if (state.sending) return;
-  hideError('sendError');
-  $('sendResult').hidden = true;
-
-  const style = $('expireStyle').value;
+function readExpire() {
   let value = parseInt($('expireValue').value, 10);
   if (!Number.isFinite(value) || value < 1) value = 1;
   if (value > 9999) value = 9999;
-  const expire = { value, style };
+  return { value, style: $('expireStyle').value };
+}
 
-  if (state.tab === 'text') {
-    const text = $('sendText').value;
-    if (!text.trim()) { showError('sendError', '请输入要分享的内容'); return; }
-    setSending(true);
-    try {
-      const data = await apiFetch('api/send/text', {
-        json: { text, expire_value: value, expire_style: style },
-      });
-      showSendResult(data);
-    } catch (e) {
-      showError('sendError', e.message);
-    }
-    setSending(false);
+function setSendingUI(on) {
+  state.composer.sending = on;
+  $('sendBtn').disabled = on;
+  $('sendBtn').textContent = on
+    ? '发送中…'
+    : (state.composer.code ? '追加并发送' : '生成取件码');
+}
+
+function renderCodeCard() {
+  const cp = state.composer;
+  if (!cp.code) {
+    $('sendResult').hidden = true;
+    $('shareState').textContent = '同一个输入框可反复追加，共用一个取件码';
     return;
   }
+  $('resultCode').textContent = cp.code;
+  const list = $('sentItems');
+  list.textContent = '';
+  cp.items.forEach((it) => {
+    const li = document.createElement('li');
+    li.textContent = (it.type === 'text' ? '✏️ ' : '📎 ') + it.label;
+    list.appendChild(li);
+  });
+  $('resultMeta').textContent = `已包含 ${cp.items.length} 项内容 · 还可以继续追加`;
+  $('sendResult').hidden = false;
+  $('shareState').textContent = `取件码 ${cp.code} · 可继续追加`;
+  $('expireCtrl').hidden = true;
+}
 
-  if (!state.file) { showError('sendError', '请选择要发送的文件'); return; }
-  setSending(true);
-  $('progress').hidden = false;
-  updateProgress(0, state.file.size, Date.now());
-  try {
-    const data = await uploadFile(state.file, expire);
-    showSendResult(data);
-  } catch (e) {
-    $('progress').hidden = true;
-    showError('sendError', e.message);
+async function doSend() {
+  const cp = state.composer;
+  if (cp.sending) return;
+  hideError('sendError');
+
+  const text = $('sendText').value;
+  const files = cp.pending.slice();
+  if (!text.trim() && !files.length) {
+    showError('sendError', '先输入文字或添加文件');
+    return;
   }
-  setSending(false);
+  setSendingUI(true);
+  let code = cp.code;
+  const sent = cp.items.slice();
+
+  try {
+    // 1) 文字先入分享
+    if (text.trim()) {
+      const body = { text };
+      if (code) body.code = code;
+      else {
+        const ex = readExpire();
+        body.expire_value = ex.value;
+        body.expire_style = ex.style;
+      }
+      const r = await apiFetch('api/send/text', { json: body });
+      code = r.code;
+      sent.push({ type: 'text', label: r.item_label });
+      $('sendText').value = '';
+      autogrow();
+    }
+
+    // 2) 文件逐个分片上传（串行，进度按文件展示）
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      $('progress').hidden = false;
+      updateProgress(0, f.size, Date.now(), `（${i + 1}/${files.length}）${f.name}`);
+      const r = await uploadFile(f, readExpire(), code);
+      code = r.code;
+      sent.push({ type: 'file', label: `${f.name}（${humanBytes(f.size)}）` });
+    }
+
+    // 3) 全部成功：更新本地状态
+    cp.code = code;
+    cp.items = sent;
+    clearPending();
+    $('progress').hidden = true;
+    renderCodeCard();
+  } catch (e) {
+    // 失败的文件留在待发送列表，改完可直接重试
+    cp.pending = cp.pending.filter((f) => !sent.some((s) => s.type === 'file' && s.label.startsWith(f.name)));
+    renderPending();
+    if (code && !cp.code) {
+      cp.code = code;
+      cp.items = sent;
+      renderCodeCard();
+    }
+    $('progress').hidden = true;
+    showError('sendError', e.message + '（未发送的文件已保留，可重试）');
+  }
+  setSendingUI(false);
 }
 
 $('sendBtn').addEventListener('click', doSend);
-$('againBtn').addEventListener('click', () => {
+
+// 新开分享：清空当前取件码状态（替代旧的"再发一个"）
+$('newShareBtn').addEventListener('click', () => {
+  state.composer.code = null;
+  state.composer.items = [];
   $('sendResult').hidden = true;
-  if (state.tab === 'text') { $('sendText').value = ''; $('textCount').textContent = '0 B'; }
-  else clearFile();
-  $('sendText') && $('sendText').focus();
+  $('expireCtrl').hidden = false;
+  hideError('sendError');
+  renderCodeCard();
+  $('sendText').focus();
 });
 
-/* ---------------- 取件 ---------------- */
+$('copyCodeBtn').addEventListener('click', async () => {
+  (await copyText(state.composer.code || '')) && flashButton($('copyCodeBtn'), '已复制 ✓');
+});
+$('copyLinkBtn').addEventListener('click', async () => {
+  const code = state.composer.code;
+  if (!code) return;
+  const link = location.origin + location.pathname.replace(/index\.html$/, '') + '#/c/' + code;
+  (await copyText(link)) && flashButton($('copyLinkBtn'), '已复制 ✓');
+});
+
+/* ---------------- 取件：渲染内容条目 ---------------- */
 
 function renderPick(data) {
   $('getResult').hidden = false;
-  $('pickMeta').textContent =
-    (data.type === 'text' ? '文本分享' : '文件分享') + ' · ' + expireText(data);
+  const items = data.items || [];
+  $('pickMeta').textContent = `共 ${items.length} 项内容 · ${expireText(data)}`;
 
-  const isText = data.type === 'text';
-  $('pickTextWrap').hidden = !isText;
-  $('pickFileWrap').hidden = isText;
+  const wrap = $('pickItems');
+  wrap.textContent = '';
+  for (const it of items) {
+    if (it.type === 'text') {
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
 
-  if (isText) {
-    $('pickText').textContent = data.text || '';
-    $('copyTextBtn').onclick = async () => {
-      (await copyText(data.text || '')) && flashButton($('copyTextBtn'), '已复制 ✓');
-    };
-    // 相对路径下载（服务端也返回了相对 download_url，这里保持一致）
-    $('pickTextDownload').href = `api/download/${encodeURIComponent(data.code)}`;
-  } else {
-    $('pickFileName').textContent = data.filename || '未命名文件';
-    $('pickFileSize').textContent = humanBytes(data.size);
-    // 服务端返回的 download_url 就是相对路径，直接可用
-    $('pickDownload').href = data.download_url || `api/download/${encodeURIComponent(data.code)}`;
+      const pre = document.createElement('pre');
+      pre.textContent = it.text || '';
+      bubble.appendChild(pre);
+
+      const bar = document.createElement('div');
+      bar.className = 'bubble-bar';
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'btn ghost';
+      copyBtn.textContent = '复制';
+      copyBtn.addEventListener('click', async () => {
+        (await copyText(it.text || '')) && flashButton(copyBtn, '已复制 ✓');
+      });
+      bar.appendChild(copyBtn);
+      bubble.appendChild(bar);
+      wrap.appendChild(bubble);
+    } else {
+      const card = document.createElement('div');
+      card.className = 'filecard';
+
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('width', '24');
+      svg.setAttribute('height', '24');
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', 'M14 3v5h5M6 3h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5a2 2 0 012-2z');
+      p.setAttribute('stroke', 'currentColor');
+      p.setAttribute('stroke-width', '1.8');
+      p.setAttribute('fill', 'none');
+      svg.appendChild(p);
+      card.appendChild(svg);
+
+      const info = document.createElement('div');
+      info.className = 'filecard-info';
+      const nm = document.createElement('div');
+      nm.className = 'filecard-name';
+      nm.textContent = it.filename || '未命名文件';
+      nm.title = it.filename || '';
+      const sz = document.createElement('div');
+      sz.className = 'hint';
+      sz.textContent = humanBytes(it.size);
+      info.append(nm, sz);
+      card.appendChild(info);
+
+      const a = document.createElement('a');
+      a.className = 'btn';
+      a.textContent = '下载';
+      a.setAttribute('download', '');
+      a.href = it.download_url || `api/download/${encodeURIComponent(data.code)}/${it.id}`;
+      card.appendChild(a);
+
+      wrap.appendChild(card);
+    }
   }
 }
 
@@ -527,17 +667,15 @@ async function loadList(page) {
       tdCode.textContent = it.code;
 
       const tdType = document.createElement('td');
-      tdType.textContent = it.type === 'text' ? '文本' : '文件';
+      tdType.textContent = `${it.item_count} 项（文${it.text_count}/件${it.file_count}）`;
 
       const tdContent = document.createElement('td');
       tdContent.className = 'cell-dim';
-      tdContent.textContent = it.type === 'text'
-        ? (it.text || '').slice(0, 60) || '(空)'
-        : it.filename || '-';
-      tdContent.title = it.type === 'text' ? it.text : it.filename;
+      tdContent.textContent = it.preview || '-';
+      tdContent.title = it.preview || '';
 
       const tdSize = document.createElement('td');
-      tdSize.textContent = it.type === 'file' ? humanBytes(it.size) : humanBytes((it.text || '').length);
+      tdSize.textContent = humanBytes(it.total_size);
 
       const tdUsed = document.createElement('td');
       tdUsed.textContent = `已取 ${it.used_count} · ${it.expired ? '已过期' : (it.expire_count < 0 ? '不限次' : `剩 ${it.expire_count}`)}`;
@@ -550,7 +688,7 @@ async function loadList(page) {
       delBtn.className = 'iconbtn';
       delBtn.textContent = '删除';
       delBtn.addEventListener('click', async () => {
-        if (!confirm(`确定删除取件码 ${it.code} 吗？对应文件也会被删除。`)) return;
+        if (!confirm(`确定删除取件码 ${it.code} 吗？其中所有文件也会被删除。`)) return;
         try {
           await apiFetch(`api/admin/share/${encodeURIComponent(it.code)}`, { method: 'DELETE' });
           loadList(state.adminPage);
@@ -624,8 +762,7 @@ async function loadPublicConfig() {
   $('siteDesc').textContent = cfg.description || '';
   $('ver').textContent = 'v' + (cfg.version || '');
   $('setupBanner').hidden = !!cfg.initialized;
-  $('textLimit').textContent = `上限 ${humanBytes(cfg.max_text_size)}`;
-  $('sizeLimit').textContent = `单文件上限 ${humanBytes(cfg.max_upload_size)}`;
+  $('sizeLimit') && ($('sizeLimit').textContent = '');
 }
 
 (async function boot() {

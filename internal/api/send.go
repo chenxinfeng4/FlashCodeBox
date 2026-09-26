@@ -33,7 +33,7 @@ func normalizeStyle(style string) string {
 
 // computeExpire mirrors the original semantics:
 //   - day/hour/minute: expires after N units (capped by maxSaveSeconds)
-//   - count: expires after N uses (backstopped by maxSaveSeconds)
+//   - count: expires after N pickups (backstopped by maxSaveSeconds)
 //   - forever: never expires
 func computeExpire(style string, value, maxSaveSeconds int64, now time.Time) (expireAt, expireCount int64, err error) {
 	if value < 1 {
@@ -73,17 +73,36 @@ func capExpire(at time.Time, now time.Time, maxSaveSeconds int64) int64 {
 }
 
 // ---------------------------------------------------------------------------
-// share creation
+// share / item helpers
 
 type expireFields struct {
+	Code        string `json:"code" form:"code"` // 非空 = 追加到该分享
 	ExpireValue int64  `json:"expire_value" form:"expire_value"`
 	ExpireStyle string `json:"expire_style" form:"expire_style"`
 }
 
-// createShare inserts a FileCode with a freshly generated unique code.
-func (a *App) createShare(ctx context.Context, typ, text, filename, storagePath string,
-	size int64, hash string, ef expireFields) (*models.FileCode, error) {
+// resolveShare loads the share to append to; empty code means "create new".
+func (a *App) resolveShare(ctx context.Context, rawCode string) (*models.FileCode, int, error) {
+	code := normalizeCode(rawCode)
+	if code == "" {
+		return nil, 0, nil
+	}
+	fc, err := a.Store.GetByCode(ctx, code)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, http.StatusNotFound, errors.New("分享不存在，可能已过期，请生成新的取件码")
+	}
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	if fc.IsExpired(models.Now()) {
+		a.removeShare(ctx, fc)
+		return nil, http.StatusGone, errors.New("分享已过期，无法继续添加，请生成新的取件码")
+	}
+	return fc, 0, nil
+}
 
+// createShareHeader inserts a new share header with a fresh unique code.
+func (a *App) createShareHeader(ctx context.Context, ef expireFields) (*models.FileCode, error) {
 	cfg := a.Cfg.Get()
 	style := normalizeStyle(ef.ExpireStyle)
 	if !expireStyles[style] {
@@ -101,17 +120,11 @@ func (a *App) createShare(ctx context.Context, typ, text, filename, storagePath 
 		}
 		fc := &models.FileCode{
 			Code:        code,
-			Type:        typ,
-			Text:        text,
-			StoragePath: storagePath,
-			Filename:    filename,
-			Size:        size,
-			FileHash:    hash,
 			ExpireAt:    expireAt,
 			ExpireCount: expireCount,
 			CreatedAt:   now.Unix(),
 		}
-		err = a.Store.InsertCode(ctx, fc)
+		err = a.Store.InsertShare(ctx, fc)
 		if err == nil {
 			return fc, nil
 		}
@@ -121,6 +134,30 @@ func (a *App) createShare(ctx context.Context, typ, text, filename, storagePath 
 		return nil, err
 	}
 	return nil, errors.New("取件码生成失败，请重试")
+}
+
+// appendItem adds one item to a share (creating the header first when needed).
+func (a *App) appendItem(ctx context.Context, share *models.FileCode, it *models.ShareItem, ef expireFields) (*models.FileCode, error) {
+	if share == nil {
+		var err error
+		share, err = a.createShareHeader(ctx, ef)
+		if err != nil {
+			return nil, err
+		}
+	}
+	n, err := a.Store.CountShareItems(ctx, share.Code)
+	if err != nil {
+		return nil, err
+	}
+	if n >= models.MaxItemsPerShare {
+		return nil, fmt.Errorf("该取件码下内容已达上限（%d 条），请新开分享", models.MaxItemsPerShare)
+	}
+	it.ShareCode = share.Code
+	it.CreatedAt = models.Now()
+	if err := a.Store.AddShareItem(ctx, it); err != nil {
+		return nil, err
+	}
+	return share, nil
 }
 
 func requireOpenUpload(c *gin.Context, a *App) bool {
@@ -134,11 +171,24 @@ func requireOpenUpload(c *gin.Context, a *App) bool {
 	return false
 }
 
+// shareStateResp tells the sender which code the content landed in.
+func shareStateResp(fc *models.FileCode, itemType string, label string) gin.H {
+	return gin.H{
+		"code":         fc.Code,
+		"expire_at":    fc.ExpireAt,
+		"expire_count": fc.ExpireCount,
+		"created_at":   fc.CreatedAt,
+		"item_type":    itemType,
+		"item_label":   label,
+	}
+}
+
 // ---------------------------------------------------------------------------
 // text share
 
 type sendTextReq struct {
 	Text        string `json:"text" form:"text" binding:"required"`
+	Code        string `json:"code" form:"code"`
 	ExpireValue int64  `json:"expire_value" form:"expire_value"`
 	ExpireStyle string `json:"expire_style" form:"expire_style"`
 }
@@ -163,18 +213,32 @@ func (a *App) SendText(c *gin.Context) {
 			fmt.Sprintf("文本超过大小限制（最大 %s）", humanBytes(cfg.MaxTextSize)))
 		return
 	}
-	fc, err := a.createShare(c.Request.Context(), models.TypeText, text, "", "", int64(len(text)), "", expireFields{
-		ExpireValue: req.ExpireValue, ExpireStyle: req.ExpireStyle,
+	share, status, err := a.resolveShare(c.Request.Context(), req.Code)
+	if err != nil {
+		fail(c, status, err.Error())
+		return
+	}
+	item := &models.ShareItem{Type: models.TypeText, Text: text, Size: int64(len(text))}
+	share, err = a.appendItem(c.Request.Context(), share, item, expireFields{
+		Code: req.Code, ExpireValue: req.ExpireValue, ExpireStyle: req.ExpireStyle,
 	})
 	if err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ok(c, shareResp(fc))
+	ok(c, shareStateResp(share, models.TypeText, previewText(text, 40)))
+}
+
+func previewText(s string, n int) string {
+	r := []rune(strings.TrimSpace(s))
+	if len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return string(r)
 }
 
 // ---------------------------------------------------------------------------
-// file share (streaming multipart: the payload never fully buffers)
+// file share (streaming multipart; multiple `file` parts allowed)
 
 func (a *App) SendFile(c *gin.Context) {
 	if !requireOpenUpload(c, a) {
@@ -182,7 +246,7 @@ func (a *App) SendFile(c *gin.Context) {
 	}
 	cfg := a.Cfg.Get()
 	// Cheap early rejection before touching the body.
-	const slack = 1 << 20
+	const slack = 4 << 20
 	if c.Request.ContentLength > cfg.MaxUploadSize+slack {
 		fail(c, http.StatusRequestEntityTooLarge,
 			fmt.Sprintf("文件超过大小限制（最大 %s）", humanBytes(cfg.MaxUploadSize)))
@@ -195,21 +259,20 @@ func (a *App) SendFile(c *gin.Context) {
 	}
 
 	var (
-		ef       expireFields
-		filename string
-		relPath  string
-		size     int64
-		hash     string
-		gotFile  bool
-		cleanup  []string
-		tooBig   bool
-		badName  bool
+		ef      expireFields
+		share   *models.FileCode
+		pending []*models.ShareItem // 流式落盘后暂存，流解析完统一入库
+		skipped []string
+		cleanup []string
 	)
 	defer func() {
 		for _, p := range cleanup {
 			_ = a.Storage.Delete(p)
 		}
 	}()
+	addSkipped := func(name, reason string) {
+		skipped = append(skipped, name+": "+reason)
+	}
 
 	for {
 		part, err := mr.NextPart()
@@ -221,6 +284,9 @@ func (a *App) SendFile(c *gin.Context) {
 			return
 		}
 		switch part.FormName() {
+		case "code":
+			b, _ := io.ReadAll(io.LimitReader(part, 32))
+			ef.Code = strings.TrimSpace(string(b))
 		case "expire_value":
 			b, _ := io.ReadAll(io.LimitReader(part, 64))
 			ef.ExpireValue = parseInt64(strings.TrimSpace(string(b)))
@@ -228,82 +294,77 @@ func (a *App) SendFile(c *gin.Context) {
 			b, _ := io.ReadAll(io.LimitReader(part, 64))
 			ef.ExpireStyle = strings.TrimSpace(string(b))
 		case "file":
-			if gotFile {
-				// Drain and ignore extra file parts.
-				_, _ = io.Copy(io.Discard, part)
-				continue
-			}
 			name := storage.SanitizeFilename(part.FileName())
-			if name == "" || !storage.ExtAllowed(name, cfg.AllowedTypes) {
-				badName = true
+			if name == "" {
+				addSkipped(part.FileName(), "文件名无效")
 				_, _ = io.Copy(io.Discard, part)
 				continue
 			}
-			relPath = storage.NewRelPath(name)
+			if !storage.ExtAllowed(name, cfg.AllowedTypes) {
+				addSkipped(name, "文件类型不被允许")
+				_, _ = io.Copy(io.Discard, part)
+				continue
+			}
+			relPath := storage.NewRelPath(name)
 			limited := io.LimitReader(part, cfg.MaxUploadSize+1)
-			size, hash, err = a.Storage.SaveStream(limited, relPath)
+			size, hash, err := a.Storage.SaveStream(limited, relPath)
 			if err != nil {
 				fail(c, http.StatusInternalServerError, "文件保存失败: "+err.Error())
 				return
 			}
 			if size > cfg.MaxUploadSize {
-				tooBig = true
-				cleanup = append(cleanup, relPath)
+				_ = a.Storage.Delete(relPath)
+				addSkipped(name, fmt.Sprintf("超过大小限制（最大 %s）", humanBytes(cfg.MaxUploadSize)))
 				continue
 			}
-			gotFile = true
-			filename = name
+			// multipart 字段顺序任意：先落盘暂存，解析完 code 后统一入库
+			cleanup = append(cleanup, relPath)
+			pending = append(pending, &models.ShareItem{
+				Type: models.TypeFile, StoragePath: relPath, Filename: name,
+				Size: size, FileHash: hash,
+			})
 		default:
 			_, _ = io.Copy(io.Discard, part)
 		}
 	}
 
-	if badName {
-		fail(c, http.StatusBadRequest, "文件类型不被允许")
-		return
-	}
-	if tooBig {
-		fail(c, http.StatusRequestEntityTooLarge,
-			fmt.Sprintf("文件超过大小限制（最大 %s）", humanBytes(cfg.MaxUploadSize)))
-		return
-	}
-	if !gotFile {
+	if len(pending) == 0 {
+		if len(skipped) > 0 {
+			fail(c, http.StatusBadRequest, strings.Join(skipped, "；"))
+			return
+		}
 		fail(c, http.StatusBadRequest, "缺少文件字段 file")
 		return
 	}
 
-	fc, err := a.createShare(c.Request.Context(), models.TypeFile, "", filename, relPath, size, hash, ef)
+	// 流解析完毕：确定分享（追加或新建），再逐条入库
+	share, status, err := a.resolveShare(c.Request.Context(), ef.Code)
 	if err != nil {
-		cleanup = append(cleanup, relPath)
-		fail(c, http.StatusInternalServerError, err.Error())
+		fail(c, status, err.Error())
 		return
 	}
-	ok(c, shareResp(fc))
+	for _, it := range pending {
+		share, err = a.appendItem(c.Request.Context(), share, it, ef)
+		if err != nil {
+			fail(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		cleanup = cleanup[1:] // 已入库的不再清理
+	}
+	ok(c, gin.H{
+		"code":         share.Code,
+		"expire_at":    share.ExpireAt,
+		"expire_count": share.ExpireCount,
+		"created_at":   share.CreatedAt,
+		"added":        len(pending),
+		"skipped":      skipped,
+	})
 }
 
 func parseInt64(s string) int64 {
 	var n int64
 	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n
-}
-
-// shareResp is the payload returned to the sender right after a share is
-// created. download_url is deliberately RELATIVE so it keeps working behind
-// any reverse-proxy path/port combination.
-func shareResp(fc *models.FileCode) gin.H {
-	resp := gin.H{
-		"code":         fc.Code,
-		"type":         fc.Type,
-		"expire_at":    fc.ExpireAt,
-		"expire_count": fc.ExpireCount,
-		"created_at":   fc.CreatedAt,
-	}
-	if fc.Type == models.TypeFile {
-		resp["filename"] = fc.Filename
-		resp["size"] = fc.Size
-		resp["download_url"] = "./api/download/" + fc.Code
-	}
-	return resp
 }
 
 func humanBytes(n int64) string {

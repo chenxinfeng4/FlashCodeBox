@@ -179,7 +179,8 @@ func (a *App) UploadChunk(c *gin.Context) {
 }
 
 // UploadComplete merges chunks in order into the final payload, verifies the
-// whole-file size (and hash when provided), then creates the share.
+// whole-file size (and hash when provided), then appends it to a share —
+// either an existing one (code field) or a freshly created one.
 func (a *App) UploadComplete(c *gin.Context) {
 	session, okS := a.loadSession(c)
 	if !okS {
@@ -191,6 +192,12 @@ func (a *App) UploadComplete(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+
+	share, status, err := a.resolveShare(ctx, ef.Code)
+	if err != nil {
+		fail(c, status, err.Error())
+		return
+	}
 
 	parts, err := a.Store.ListChunkParts(ctx, session.UploadID)
 	if err != nil {
@@ -244,7 +251,14 @@ func (a *App) UploadComplete(c *gin.Context) {
 		return
 	}
 
-	fc, err := a.createShare(ctx, models.TypeFile, "", session.FileName, relPath, size, hash, ef)
+	item := &models.ShareItem{
+		Type:        models.TypeFile,
+		StoragePath: relPath,
+		Filename:    session.FileName,
+		Size:        size,
+		FileHash:    hash,
+	}
+	share, err = a.appendItem(ctx, share, item, ef)
 	if err != nil {
 		_ = a.Storage.Delete(relPath)
 		fail(c, http.StatusInternalServerError, err.Error())
@@ -252,7 +266,7 @@ func (a *App) UploadComplete(c *gin.Context) {
 	}
 	_ = a.Store.DeleteChunkSession(ctx, session.UploadID)
 	_ = os.RemoveAll(filepath.Join(a.ChunkDir, session.UploadID))
-	ok(c, shareResp(fc))
+	ok(c, shareStateResp(share, models.TypeFile, session.FileName))
 }
 
 // UploadStatus lets clients inspect which parts already landed (resume).

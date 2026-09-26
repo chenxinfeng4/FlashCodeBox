@@ -228,9 +228,10 @@ func (a *App) AdminPutConfig(c *gin.Context) {
 		fail(c, http.StatusBadRequest, "有效期上限需为 0（不限制）或 60 秒 - 365 天")
 		return
 	}
-	if req.RateLimitCount < 1 || req.RateLimitCount > 10000 ||
+	// 0 = 关闭限流
+	if req.RateLimitCount < 0 || req.RateLimitCount > 10000 ||
 		req.RateLimitWindow < 1 || req.RateLimitWindow > 86400 {
-		fail(c, http.StatusBadRequest, "限流参数超出范围")
+		fail(c, http.StatusBadRequest, "限流参数超出范围（次数 0-10000，0 为关闭；窗口 1-86400 秒）")
 		return
 	}
 	if req.ChunkExpireHours < 1 || req.ChunkExpireHours > 720 {
@@ -289,15 +290,43 @@ func (a *App) AdminList(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+	codes := make([]string, 0, len(list))
+	for _, fc := range list {
+		codes = append(codes, fc.Code)
+	}
+	itemsByCode, err := a.Store.ItemsForCodes(c.Request.Context(), codes)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
 	now := models.Now()
 	items := make([]gin.H, 0, len(list))
 	for _, fc := range list {
+		shares := itemsByCode[fc.Code]
+		var textCount, fileCount, totalSize int64
+		preview := ""
+		for _, it := range shares {
+			switch it.Type {
+			case models.TypeText:
+				textCount++
+				if preview == "" {
+					preview = previewText(it.Text, 60)
+				}
+			case models.TypeFile:
+				fileCount++
+				totalSize += it.Size
+				if preview == "" {
+					preview = it.Filename
+				}
+			}
+		}
 		items = append(items, gin.H{
 			"code":         fc.Code,
-			"type":         fc.Type,
-			"filename":     fc.Filename,
-			"size":         fc.Size,
-			"text":         fc.Text,
+			"item_count":   len(shares),
+			"text_count":   textCount,
+			"file_count":   fileCount,
+			"total_size":   totalSize,
+			"preview":      preview,
 			"expire_at":    fc.ExpireAt,
 			"expire_count": fc.ExpireCount,
 			"used_count":   fc.UsedCount,
@@ -310,17 +339,22 @@ func (a *App) AdminList(c *gin.Context) {
 
 func (a *App) AdminDelete(c *gin.Context) {
 	code := normalizeCode(c.Param("code"))
-	fc, err := a.Store.DeleteByCode(c.Request.Context(), code)
-	if errors.Is(err, store.ErrNotFound) {
+	if _, err := a.Store.GetByCode(c.Request.Context(), code); errors.Is(err, store.ErrNotFound) {
 		fail(c, http.StatusNotFound, "记录不存在")
 		return
 	}
-	if err != nil {
+	// 先删文件，再级联删条目和头
+	items, err := a.Store.ListShareItems(c.Request.Context(), code)
+	if err == nil {
+		for _, it := range items {
+			if it.Type == models.TypeFile && it.StoragePath != "" {
+				_ = a.Storage.Delete(it.StoragePath)
+			}
+		}
+	}
+	if err := a.Store.DeleteShareCascade(c.Request.Context(), code); err != nil {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if fc.Type == models.TypeFile && fc.StoragePath != "" {
-		_ = a.Storage.Delete(fc.StoragePath)
-	}
-	ok(c, gin.H{"deleted": fc.Code})
+	ok(c, gin.H{"deleted": code})
 }

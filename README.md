@@ -13,12 +13,14 @@
 
 ## 功能
 
-- 文本 / 文件分享，5 位取件码（纯数字或去混淆的大写字母+数字）
-- 过期策略：天 / 小时 / 分钟 / 可取次数 / 永久（可设全局有效期上限）
+- **聊天式发送**：一个输入框混搭文字与多文件（📎/拖拽/粘贴），生成取件码后**可继续追加内容**，同一批内容共用一个取件码
+- 取件侧按条目展示：文本气泡 + 文件卡片（各自独立下载）
+- 5 位取件码（纯数字或去混淆的大写字母+数字）
+- 过期策略：天 / 小时 / 分钟 / 可取次数 / 永久（可设全局有效期上限）；**打开取件即计次**，取件后的下载不再计次
 - 分片上传：并发、失败退避重试、刷新页面后断点续传、分片与整文件 sha256 校验
 - 下载支持 HTTP Range（断点续传下载），响应强制 `Content-Disposition: attachment`
 - 精简管理后台（`#/admin`）：首次进入设置管理密码；站点配置在线修改、分享记录列表/删除
-- IP 限流（滑动窗口）、文件类型白名单、上传大小限制
+- IP 限流（滑动窗口，次数设 0 可关闭）、文件类型白名单、上传大小限制
 - 后台协程自动清理过期分享、未完成的分片会话与孤儿分片
 - 配置存 SQLite，重启保留；SQLite 为 WAL 模式 + 单连接，免运维
 
@@ -110,34 +112,40 @@ filesender.example.com {
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `api/config` | 公开站点参数 |
-| POST | `api/send/text` | 发文本 `{text, expire_value, expire_style}` |
-| POST | `api/send/file` | 发文件（multipart：`file` + 过期字段），适合小文件/curl |
+| POST | `api/send/text` | 发文本 `{text, expire_value?, expire_style?, code?}`；带 `code` 即追加 |
+| POST | `api/send/file` | 发文件（multipart：`file` 可多个 + `code`? + 过期字段），适合小文件/curl |
 | POST | `api/upload/init` | 分片上传初始化 `{file_name, file_size, file_hash?}`，同指纹自动续传 |
 | PUT | `api/upload/{id}/{n}` | 上传第 n 片（raw body，可选 `X-Chunk-Hash`） |
 | GET | `api/upload/{id}/status` | 已传分片查询（断点续传） |
-| POST | `api/upload/{id}/complete` | 合并并生成取件码 |
-| POST/GET | `api/get` | 输码取件（文本返回内容并计次；文件返回元数据+相对下载链接，不计次） |
-| GET | `api/download/{code}` | 下载（计次；支持 Range） |
+| POST | `api/upload/{id}/complete` | 合并；`{code?}` 追加到已有分享，否则创建 |
+| POST/GET | `api/get` | 输码取件：**计次**，返回全部条目（文本内容+文件列表） |
+| GET | `api/download/{code}/{item}` | 下载指定条目（不计次；支持 Range） |
+| GET | `api/download/{code}` | 兼容：下载第一个内容 |
 | GET | `api/admin/status` | 是否已初始化 |
 | POST | `api/admin/setup` | 首次设置管理密码 |
 | POST | `api/admin/login` | 登录（Bearer token，30 天） |
-| GET/PUT | `api/admin/config` | 读取/修改运行时配置 |
-| GET | `api/admin/list` | 分享记录（分页） |
-| DELETE | `api/admin/share/{code}` | 删除分享（含文件） |
+| GET/PUT | `api/admin/config` | 读取/修改运行时配置（限流次数 0=关闭） |
+| GET | `api/admin/list` | 分享记录（分页，含条目聚合） |
+| DELETE | `api/admin/share/{code}` | 删除分享（级联删除全部条目与文件） |
 
 示例：
 
 ```bash
-# 发文本
+# 发文本（生成新取件码）
 curl -X POST http://127.0.0.1:12345/api/send/text \
   -H 'Content-Type: application/json' \
   -d '{"text":"hello","expire_value":1,"expire_style":"day"}'
 
-# 发文件（小文件直传）
-curl -X POST http://127.0.0.1:12345/api/send/file \
-  -F "file=@报告.pdf" -F "expire_value=7" -F "expire_style=day"
+# 追加文本到已有分享（共用取件码）
+curl -X POST http://127.0.0.1:12345/api/send/text \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"再来一条","code":"12345"}'
 
-# 取件
+# 发文件（小文件直传，可一次多个）
+curl -X POST http://127.0.0.1:12345/api/send/file \
+  -F "code=12345" -F "file=@报告.pdf" -F "file=@说明.txt"
+
+# 取件（返回全部条目）
 curl -X POST http://127.0.0.1:12345/api/get \
   -H 'Content-Type: application/json' -d '{"code":"12345"}'
 ```
@@ -164,9 +172,10 @@ filesender/
 - Go 单二进制，前端内嵌，无 Python/Node 运行时
 - 发送/取件同页；前端全相对路径，支持任意反代子路径
 - 分片上传默认开启（原版默认关闭），规避反代 body 限制导致的"必须同端口"问题
+- 一个取件码对应一个可追加的内容包（多条文本 + 多个文件），原版一码只对应一条内容
 - 取件码字符集去掉 `0/O/1/I`，避免手抄混淆
 - 次数型分享的有效期兜底从 1 天放宽为可配置的全局上限（默认 7 天）
-- 文件分享"预览元数据不消耗次数"，下载时才计次
+- 计次发生在"打开取件"时（原版文本取一次、文件下载又计一次）
 - 未实现：多存储后端（S3/OneDrive/WebDAV/OpenDAL，接口已预留）、多语言界面
 
 ## 数据备份

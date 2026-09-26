@@ -30,74 +30,62 @@
 <!-- ===================== 主视图：发送 + 取件 ===================== -->
 <main class="layout" id="mainView">
 
-  <!-- 发送 -->
+  <!-- 发送：聊天式输入框，文字+文件混搭、可多次追加 -->
   <section class="card" id="sendPanel" aria-label="发送">
     <div class="card-head">
       <h2><span class="dot dot-send"></span>发送</h2>
-      <div class="tabs" role="tablist">
-        <button class="tab active" data-tab="text" role="tab">文本</button>
-        <button class="tab" data-tab="file" role="tab">文件</button>
-      </div>
+      <span class="hint" id="shareState">同一个输入框可反复追加，共用一个取件码</span>
     </div>
 
-    <div class="pane" id="paneText">
-      <textarea id="sendText" rows="7" placeholder="输入要分享的文本、代码、链接…（可粘贴）"></textarea>
-      <div class="row-between">
-        <span class="hint" id="textCount">0 B</span>
-        <span class="hint" id="textLimit"></span>
+    <div class="composer" id="composer">
+      <div class="attach-list" id="attachList"></div>
+      <textarea id="sendText" rows="2"
+        placeholder="输入要分享的文字，或点 📎 添加文件…&#10;文字和文件可混搭，发送后还能继续追加"></textarea>
+      <div class="composer-bar">
+        <button class="attachbtn" id="attachBtn" type="button" title="添加文件（可多选）" aria-label="添加文件">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 01-7.8-7.8l8.9-8.9a3.7 3.7 0 015.2 5.2l-8.9 8.9a1.8 1.8 0 01-2.6-2.6l8.2-8.2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <input type="file" id="fileInput" multiple hidden>
+        <div class="expire-inline" id="expireCtrl" title="有效期（生成取件码时生效）">
+          <select id="expireStyle" aria-label="有效期单位">
+            <option value="day" selected>天</option>
+            <option value="hour">小时</option>
+            <option value="minute">分钟</option>
+            <option value="count">可取次数</option>
+            <option value="forever">永久</option>
+          </select>
+          <input id="expireValue" type="number" value="3" min="1" max="9999" aria-label="有效期数值">
+        </div>
+        <button class="btn primary" id="sendBtn" type="button">生成取件码</button>
       </div>
-    </div>
-
-    <div class="pane" id="paneFile" hidden>
-      <input type="file" id="fileInput" hidden>
-      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="选择文件">
-        <svg viewBox="0 0 24 24" width="34" height="34" class="dz-icon"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
-        <div class="dz-text">点击选择或拖拽文件到此处</div>
-        <div class="hint" id="sizeLimit"></div>
+      <div class="progress" id="progress" hidden>
+        <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+        <div class="row-between">
+          <span class="hint" id="progressText">准备上传…</span>
+          <span class="hint" id="progressSpeed"></span>
+        </div>
       </div>
-      <div class="filechip" id="fileChip" hidden>
-        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M14 3v5h5M6 3h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5a2 2 0 012-2z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/></svg>
-        <span class="filechip-name" id="fileChipName"></span>
-        <span class="hint" id="fileChipSize"></span>
-        <button class="iconbtn" id="fileClear" title="移除文件" aria-label="移除文件">✕</button>
-      </div>
-    </div>
-
-    <div class="expire-row">
-      <label for="expireStyle">有效期</label>
-      <select id="expireStyle">
-        <option value="day" selected>天</option>
-        <option value="hour">小时</option>
-        <option value="minute">分钟</option>
-        <option value="count">可取次数</option>
-        <option value="forever">永久</option>
-      </select>
-      <input id="expireValue" type="number" value="3" min="1" max="9999">
-    </div>
-
-    <button class="btn primary btn-block" id="sendBtn">生成取件码</button>
-
-    <div class="progress" id="progress" hidden>
-      <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
-      <div class="row-between">
-        <span class="hint" id="progressText">准备上传…</span>
-        <span class="hint" id="progressSpeed"></span>
-      </div>
-    </div>
-
-    <div class="result" id="sendResult" hidden>
-      <div class="result-code-label">取件码</div>
-      <div class="result-code" id="resultCode">—</div>
-      <div class="result-meta hint" id="resultMeta"></div>
-      <div class="result-actions">
-        <button class="btn" id="copyCodeBtn">复制取件码</button>
-        <button class="btn" id="copyLinkBtn">复制取件链接</button>
-        <button class="btn ghost" id="againBtn">再发一个</button>
-      </div>
-      <p class="hint">对方在本页右侧输入取件码即可领取；链接打开会自动填入取件码。</p>
     </div>
 
     <div class="alert err" id="sendError" hidden></div>
+
+    <div class="codecard" id="sendResult" hidden>
+      <div class="codecard-main">
+        <div>
+          <div class="result-code-label">取件码</div>
+          <div class="result-code" id="resultCode">—</div>
+        </div>
+        <div class="result-actions">
+          <button class="btn" id="copyCodeBtn">复制取件码</button>
+          <button class="btn" id="copyLinkBtn">复制取件链接</button>
+        </div>
+      </div>
+      <ul class="sent-items" id="sentItems"></ul>
+      <div class="row-between">
+        <span class="hint" id="resultMeta"></span>
+        <button class="btn ghost" id="newShareBtn">新开分享</button>
+      </div>
+    </div>
   </section>
 
   <!-- 取件 -->
@@ -116,28 +104,7 @@
 
     <div class="result" id="getResult" hidden>
       <div class="pick-meta hint" id="pickMeta"></div>
-
-      <div id="pickTextWrap" hidden>
-        <pre class="text-box" id="pickText"></pre>
-        <div class="result-actions">
-          <button class="btn" id="copyTextBtn">复制内容</button>
-          <a class="btn ghost" id="pickTextDownload" download>下载为 .txt</a>
-        </div>
-      </div>
-
-      <div id="pickFileWrap" hidden>
-        <div class="filecard">
-          <svg viewBox="0 0 24 24" width="26" height="26"><path d="M14 3v5h5M6 3h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5a2 2 0 012-2z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/></svg>
-          <div class="filecard-info">
-            <div class="filecard-name" id="pickFileName"></div>
-            <div class="hint" id="pickFileSize"></div>
-          </div>
-        </div>
-        <div class="result-actions">
-          <a class="btn primary" id="pickDownload" download>下载文件</a>
-        </div>
-      </div>
-
+      <div class="pick-items" id="pickItems"></div>
       <button class="btn ghost" id="pickAgainBtn">再取一个</button>
     </div>
   </section>
@@ -192,7 +159,7 @@
         </label>
         <label class="field"><span>类型白名单（逗号分隔或 *）</span><input id="cfgTypes" placeholder="jpg, png, zip 或 *"></label>
         <label class="field"><span>有效期上限（天，0=不限）</span><input id="cfgMaxSave" type="number" min="0" step="1"></label>
-        <label class="field"><span>限流次数（每窗口/IP）</span><input id="cfgRateCount" type="number" min="1" step="1"></label>
+        <label class="field"><span>限流次数（每窗口/IP，0=关闭）</span><input id="cfgRateCount" type="number" min="0" step="1"></label>
         <label class="field"><span>限流窗口（秒）</span><input id="cfgRateWindow" type="number" min="1" step="1"></label>
         <label class="field"><span>未完成分片保留（小时）</span><input id="cfgChunkExpire" type="number" min="1" step="1"></label>
         <label class="check span2"><input id="cfgOpenUpload" type="checkbox"><span>开放匿名上传（关闭后仅管理员可发送）</span></label>

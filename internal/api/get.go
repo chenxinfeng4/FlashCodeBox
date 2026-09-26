@@ -6,6 +6,7 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,9 +25,9 @@ type getReq struct {
 	Code string `json:"code" form:"code" binding:"required"`
 }
 
-// GetShare resolves a pickup code. Text shares are consumed here; file
-// shares only return metadata + a RELATIVE download_url and are consumed at
-// download time, so previewing never burns a use.
+// GetShare resolves a pickup code and returns ALL of its items (text
+// messages + file list). One pickup consumes one use; afterwards the files
+// can be downloaded freely.
 func (a *App) GetShare(c *gin.Context) {
 	var req getReq
 	if err := c.ShouldBind(&req); err != nil {
@@ -49,48 +50,61 @@ func (a *App) GetShare(c *gin.Context) {
 		return
 	}
 
-	base := gin.H{"code": fc.Code,
-		"type":         fc.Type,
-		"expire_at":    fc.ExpireAt,
-		"expire_count": fc.ExpireCount,
-		"used_count":   fc.UsedCount,
-		"created_at":   fc.CreatedAt,
+	items, err := a.Store.ListShareItems(c.Request.Context(), code)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
 	}
-	if fc.Type == models.TypeText {
-		// 原子消费一次：WHERE 保证取件码在消费前仍有效（时间未过期且次数未用尽），
-		// 消费成功即返回内容；失败的竞争者拿到 ErrNotFound → 410。
-		used, err := a.Store.ConsumeByCode(c.Request.Context(), code, models.Now())
-		if errors.Is(err, store.ErrNotFound) {
-			fail(c, http.StatusGone, "分享已过期")
-			return
-		}
-		if err != nil {
-			fail(c, http.StatusInternalServerError, err.Error())
-			return
-		}
-		base["text"] = fc.Text
-		base["expire_count"] = used.ExpireCount
-		base["used_count"] = used.UsedCount
-		ok(c, base)
+	if len(items) == 0 {
+		a.removeShare(c.Request.Context(), fc)
+		fail(c, http.StatusGone, "分享内容为空")
 		return
 	}
 
-	// File share: verify the payload still exists before promising a URL.
-	exists, err := a.Storage.Exists(fc.StoragePath)
-	if err != nil || !exists {
-		a.removeShare(c.Request.Context(), fc)
-		fail(c, http.StatusGone, "文件已失效")
+	// 取件计次：打开即消耗一次（时间/次数校验在 UPDATE 内原子完成）。
+	used, err := a.Store.ConsumeByCode(c.Request.Context(), code, models.Now())
+	if errors.Is(err, store.ErrNotFound) {
+		fail(c, http.StatusGone, "分享已过期")
 		return
 	}
-	base["filename"] = fc.Filename
-	base["size"] = fc.Size
-	base["download_url"] = "./api/download/" + fc.Code
-	ok(c, base)
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	out := make([]gin.H, 0, len(items))
+	for _, it := range items {
+		entry := gin.H{
+			"id":         it.ID,
+			"type":       it.Type,
+			"created_at": it.CreatedAt,
+		}
+		if it.Type == models.TypeText {
+			entry["text"] = it.Text
+		} else {
+			entry["filename"] = it.Filename
+			entry["size"] = it.Size
+			// 相对路径，任何反代子路径/端口下都成立
+			entry["download_url"] = "./api/download/" + it.ShareCode + "/" + strconv.FormatInt(it.ID, 10)
+		}
+		out = append(out, entry)
+	}
+	ok(c, gin.H{
+		"code":         code,
+		"expire_at":    used.ExpireAt,
+		"expire_count": used.ExpireCount,
+		"used_count":   used.UsedCount,
+		"created_at":   fc.CreatedAt,
+		"items":        out,
+	})
 }
 
-// Download streams the payload. os.File + ServeContent give Range (断点续传)
+// Download streams one item. os.File + ServeContent give Range (断点续传)
 // support for free; every response is forced to attachment to defuse any
 // stored-content XSS (HTML/SVG uploads cannot execute).
+//
+//	GET api/download/{code}/{itemID}  指定条目
+//	GET api/download/{code}           兼容：第一个内容（文本 → .txt）
 func (a *App) Download(c *gin.Context) {
 	code := normalizeCode(c.Param("code"))
 	fc, err := a.Store.GetByCode(c.Request.Context(), code)
@@ -108,17 +122,42 @@ func (a *App) Download(c *gin.Context) {
 		return
 	}
 
-	modTime := time.Unix(fc.CreatedAt, 0)
-	if fc.Type == models.TypeText {
-		setAttachment(c, "取件_"+fc.Code+".txt")
-		http.ServeContent(c.Writer, c.Request, fc.Code+".txt", modTime,
-			bytes.NewReader([]byte(fc.Text)))
+	var item *models.ShareItem
+	if raw := c.Param("item"); raw != "" {
+		itemID, perr := strconv.ParseInt(raw, 10, 64)
+		if perr != nil || itemID < 1 {
+			fail(c, http.StatusBadRequest, "条目编号无效")
+			return
+		}
+		item, err = a.Store.GetShareItem(c.Request.Context(), code, itemID)
+	} else {
+		var items []*models.ShareItem
+		items, err = a.Store.ListShareItems(c.Request.Context(), code)
+		if err == nil && len(items) > 0 {
+			item = items[0]
+		}
+	}
+	if errors.Is(err, store.ErrNotFound) || (err == nil && item == nil) {
+		fail(c, http.StatusNotFound, "内容不存在")
+		return
+	}
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	f, _, err := a.Storage.Open(fc.StoragePath)
+	modTime := time.Unix(item.CreatedAt, 0)
+	if item.Type == models.TypeText {
+		setAttachment(c, "取件_"+code+".txt")
+		http.ServeContent(c.Writer, c.Request, code+".txt", modTime,
+			bytes.NewReader([]byte(item.Text)))
+		return
+	}
+
+	f, _, err := a.Storage.Open(item.StoragePath)
 	if errors.Is(err, storage.ErrNotFound) {
-		a.removeShare(c.Request.Context(), fc)
+		// 文件丢了：删掉这个条目，分享继续可用
+		_ = a.deleteItem(c.Request.Context(), item)
 		fail(c, http.StatusGone, "文件已失效")
 		return
 	}
@@ -128,20 +167,10 @@ func (a *App) Download(c *gin.Context) {
 	}
 	defer f.Close()
 
-	used, err := a.Store.ConsumeByCode(c.Request.Context(), code, models.Now())
-	if errors.Is(err, store.ErrNotFound) {
-		fail(c, http.StatusGone, "分享已过期")
-		return
-	}
-	if err != nil {
-		fail(c, http.StatusInternalServerError, err.Error())
-		return
-	}
-	_ = used
-
+	// 下载不再计次——计次发生在取件（api/get）时
 	c.Header("Content-Type", "application/octet-stream")
-	setAttachment(c, fc.Filename)
-	http.ServeContent(c.Writer, c.Request, fc.Filename, modTime, f)
+	setAttachment(c, item.Filename)
+	http.ServeContent(c.Writer, c.Request, item.Filename, modTime, f)
 }
 
 func setAttachment(c *gin.Context, filename string) {
@@ -149,12 +178,23 @@ func setAttachment(c *gin.Context, filename string) {
 		mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
 }
 
-// removeShare deletes the row and its payload (lazy expiry cleanup).
+// removeShare deletes the header, its items and all file payloads
+// (lazy expiry cleanup).
 func (a *App) removeShare(ctx context.Context, fc *models.FileCode) {
-	if fc.Type == models.TypeFile && fc.StoragePath != "" {
-		_ = a.Storage.Delete(fc.StoragePath)
+	items, err := a.Store.ListShareItems(ctx, fc.Code)
+	if err == nil {
+		for _, it := range items {
+			if it.Type == models.TypeFile && it.StoragePath != "" {
+				_ = a.Storage.Delete(it.StoragePath)
+			}
+		}
 	}
-	if _, err := a.Store.DeleteByCode(ctx, fc.Code); err != nil && !errors.Is(err, store.ErrNotFound) {
-		return
+	_ = a.Store.DeleteShareCascade(ctx, fc.Code)
+}
+
+func (a *App) deleteItem(ctx context.Context, it *models.ShareItem) error {
+	if it.Type == models.TypeFile && it.StoragePath != "" {
+		_ = a.Storage.Delete(it.StoragePath)
 	}
+	return a.Store.DeleteShareItem(ctx, it.ShareCode, it.ID)
 }

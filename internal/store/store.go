@@ -21,16 +21,13 @@ type Store struct {
 func New(gdb *sql.DB) *Store { return &Store{gdb: gdb} }
 
 // ---------------------------------------------------------------------------
-// share codes
+// share headers (pickup codes)
 
-func (s *Store) InsertCode(ctx context.Context, c *models.FileCode) error {
+func (s *Store) InsertShare(ctx context.Context, c *models.FileCode) error {
 	res, err := s.gdb.ExecContext(ctx,
-		`INSERT INTO file_codes
-			(code, type, text, storage_path, filename, size, file_hash,
-			 expire_at, expire_count, used_count, created_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		c.Code, c.Type, c.Text, c.StoragePath, c.Filename, c.Size, c.FileHash,
-		c.ExpireAt, c.ExpireCount, 0, c.CreatedAt,
+		`INSERT INTO file_codes (code, expire_at, expire_count, used_count, created_at)
+		 VALUES (?,?,?,?,?)`,
+		c.Code, c.ExpireAt, c.ExpireCount, 0, c.CreatedAt,
 	)
 	if err != nil {
 		return err
@@ -39,18 +36,27 @@ func (s *Store) InsertCode(ctx context.Context, c *models.FileCode) error {
 	return nil
 }
 
+const shareCols = `id, code, expire_at, expire_count, used_count, created_at`
+
+func scanShare(scan func(dest ...any) error) (*models.FileCode, error) {
+	var c models.FileCode
+	err := scan(&c.ID, &c.Code, &c.ExpireAt, &c.ExpireCount, &c.UsedCount, &c.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
 func (s *Store) GetByCode(ctx context.Context, code string) (*models.FileCode, error) {
-	row := s.gdb.QueryRowContext(ctx, `SELECT `+codeCols+` FROM file_codes WHERE code = ?`, code)
-	return scanCode(row.Scan)
+	row := s.gdb.QueryRowContext(ctx, `SELECT `+shareCols+` FROM file_codes WHERE code = ?`, code)
+	return scanShare(row.Scan)
 }
 
-func (s *Store) GetByID(ctx context.Context, id int64) (*models.FileCode, error) {
-	row := s.gdb.QueryRowContext(ctx, `SELECT `+codeCols+` FROM file_codes WHERE id = ?`, id)
-	return scanCode(row.Scan)
-}
-
-// ConsumeByCode atomically consumes one use: it only succeeds while the share
-// is neither time-expired nor count-exhausted, bumping used_count and
+// ConsumeByCode atomically consumes one pickup: it only succeeds while the
+// share is neither time-expired nor count-exhausted, bumping used_count and
 // decrementing expire_count in the same statement (race-free under SQLite's
 // single-writer model).
 func (s *Store) ConsumeByCode(ctx context.Context, code string, now int64) (*models.FileCode, error) {
@@ -61,37 +67,59 @@ func (s *Store) ConsumeByCode(ctx context.Context, code string, now int64) (*mod
 		WHERE code = ?
 		  AND (expire_count < 0 OR expire_count > 0)
 		  AND (expire_at = 0 OR expire_at > ?)
-		RETURNING `+codeCols, code, now)
-	return scanCode(row.Scan)
+		RETURNING `+shareCols, code, now)
+	return scanShare(row.Scan)
 }
 
-// DeleteExpired returns every share that has expired and removes the rows.
-func (s *Store) DeleteExpired(ctx context.Context, now int64) ([]*models.FileCode, error) {
-	rows, err := s.gdb.QueryContext(ctx, `SELECT `+codeCols+` FROM file_codes
+// ExpiredShares returns every expired share header. The caller must delete
+// item payloads (files) first and then call DeleteShareCascade per share.
+func (s *Store) ExpiredShares(ctx context.Context, now int64) ([]*models.FileCode, error) {
+	rows, err := s.gdb.QueryContext(ctx, `SELECT `+shareCols+` FROM file_codes
 		WHERE (expire_at > 0 AND expire_at <= ?) OR expire_count = 0`, now)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	var out []*models.FileCode
 	for rows.Next() {
-		c, err := scanCode(rows.Scan)
+		c, err := scanShare(rows.Scan)
 		if err != nil {
-			rows.Close()
 			return out, err
 		}
 		out = append(out, c)
 	}
+	return out, rows.Err()
+}
+
+// DeleteEmptyShares removes share headers that never got any item (e.g. the
+// process died between header insert and item insert). Returns removed codes.
+func (s *Store) DeleteEmptyShares(ctx context.Context, before int64) ([]string, error) {
+	rows, err := s.gdb.QueryContext(ctx, `SELECT code FROM file_codes
+		WHERE created_at < ?
+		  AND NOT EXISTS (SELECT 1 FROM share_items WHERE share_code = file_codes.code)`, before)
+	if err != nil {
+		return nil, err
+	}
+	var codes []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			rows.Close()
+			return codes, err
+		}
+		codes = append(codes, c)
+	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return out, err
+		return codes, err
 	}
-	if len(out) > 0 {
-		if _, err := s.gdb.ExecContext(ctx,
-			`DELETE FROM file_codes WHERE (expire_at > 0 AND expire_at <= ?) OR expire_count = 0`, now); err != nil {
-			return out, err
+	for _, c := range codes {
+		_, err := s.gdb.ExecContext(ctx, `DELETE FROM file_codes WHERE code = ?`, c)
+		if err != nil {
+			return codes, err
 		}
 	}
-	return out, nil
+	return codes, nil
 }
 
 func (s *Store) ListCodes(ctx context.Context, offset, limit int) ([]*models.FileCode, int, error) {
@@ -99,7 +127,7 @@ func (s *Store) ListCodes(ctx context.Context, offset, limit int) ([]*models.Fil
 	if err := s.gdb.QueryRowContext(ctx, `SELECT COUNT(*) FROM file_codes`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := s.gdb.QueryContext(ctx, `SELECT `+codeCols+` FROM file_codes
+	rows, err := s.gdb.QueryContext(ctx, `SELECT `+shareCols+` FROM file_codes
 		ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, err
@@ -107,7 +135,7 @@ func (s *Store) ListCodes(ctx context.Context, offset, limit int) ([]*models.Fil
 	defer rows.Close()
 	var out []*models.FileCode
 	for rows.Next() {
-		c, err := scanCode(rows.Scan)
+		c, err := scanShare(rows.Scan)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -116,29 +144,111 @@ func (s *Store) ListCodes(ctx context.Context, offset, limit int) ([]*models.Fil
 	return out, total, rows.Err()
 }
 
-func (s *Store) DeleteByCode(ctx context.Context, code string) (*models.FileCode, error) {
-	c, err := s.GetByCode(ctx, code)
+// DeleteShareCascade removes a share header and all of its items.
+// Files on storage must be deleted by the caller (it needs the paths first).
+func (s *Store) DeleteShareCascade(ctx context.Context, code string) error {
+	if _, err := s.gdb.ExecContext(ctx, `DELETE FROM share_items WHERE share_code = ?`, code); err != nil {
+		return err
+	}
+	_, err := s.gdb.ExecContext(ctx, `DELETE FROM file_codes WHERE code = ?`, code)
+	return err
+}
+
+// ---------------------------------------------------------------------------
+// share items
+
+func (s *Store) AddShareItem(ctx context.Context, it *models.ShareItem) error {
+	res, err := s.gdb.ExecContext(ctx, `INSERT INTO share_items
+		(share_code, type, text, storage_path, filename, size, file_hash, created_at)
+		VALUES (?,?,?,?,?,?,?,?)`,
+		it.ShareCode, it.Type, it.Text, it.StoragePath, it.Filename, it.Size, it.FileHash, it.CreatedAt,
+	)
+	if err != nil {
+		return err
+	}
+	it.ID, _ = res.LastInsertId()
+	return nil
+}
+
+func (s *Store) CountShareItems(ctx context.Context, code string) (int, error) {
+	var n int
+	err := s.gdb.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM share_items WHERE share_code = ?`, code).Scan(&n)
+	return n, err
+}
+
+func (s *Store) ListShareItems(ctx context.Context, code string) ([]*models.ShareItem, error) {
+	rows, err := s.gdb.QueryContext(ctx, `SELECT `+itemCols+` FROM share_items
+		WHERE share_code = ? ORDER BY id`, code)
 	if err != nil {
 		return nil, err
 	}
-	_, err = s.gdb.ExecContext(ctx, `DELETE FROM file_codes WHERE code = ?`, code)
-	return c, err
+	defer rows.Close()
+	var out []*models.ShareItem
+	for rows.Next() {
+		it, err := scanItem(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
 }
 
-const codeCols = `id, code, type, text, storage_path, filename, size, file_hash,
-	expire_at, expire_count, used_count, created_at`
+func (s *Store) GetShareItem(ctx context.Context, code string, itemID int64) (*models.ShareItem, error) {
+	row := s.gdb.QueryRowContext(ctx, `SELECT `+itemCols+` FROM share_items
+		WHERE share_code = ? AND id = ?`, code, itemID)
+	return scanItem(row.Scan)
+}
 
-func scanCode(scan func(dest ...any) error) (*models.FileCode, error) {
-	var c models.FileCode
-	err := scan(&c.ID, &c.Code, &c.Type, &c.Text, &c.StoragePath, &c.Filename,
-		&c.Size, &c.FileHash, &c.ExpireAt, &c.ExpireCount, &c.UsedCount, &c.CreatedAt)
+// DeleteShareItem removes a single item from a share (e.g. a lost file).
+func (s *Store) DeleteShareItem(ctx context.Context, code string, itemID int64) error {
+	_, err := s.gdb.ExecContext(ctx,
+		`DELETE FROM share_items WHERE share_code = ? AND id = ?`, code, itemID)
+	return err
+}
+
+// ItemsForCodes loads items for a batch of share codes (admin list page).
+func (s *Store) ItemsForCodes(ctx context.Context, codes []string) (map[string][]*models.ShareItem, error) {
+	out := make(map[string][]*models.ShareItem, len(codes))
+	if len(codes) == 0 {
+		return out, nil
+	}
+	placeholders := strings.Repeat("?,", len(codes))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(codes))
+	for i, c := range codes {
+		args[i] = c
+	}
+	rows, err := s.gdb.QueryContext(ctx, `SELECT `+itemCols+` FROM share_items
+		WHERE share_code IN (`+placeholders+`) ORDER BY share_code, id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		it, err := scanItem(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out[it.ShareCode] = append(out[it.ShareCode], it)
+	}
+	return out, rows.Err()
+}
+
+const itemCols = `id, share_code, type, text, storage_path, filename, size, file_hash, created_at`
+
+func scanItem(scan func(dest ...any) error) (*models.ShareItem, error) {
+	var it models.ShareItem
+	err := scan(&it.ID, &it.ShareCode, &it.Type, &it.Text, &it.StoragePath,
+		&it.Filename, &it.Size, &it.FileHash, &it.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &c, nil
+	return &it, nil
 }
 
 // ---------------------------------------------------------------------------

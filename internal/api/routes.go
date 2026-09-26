@@ -22,7 +22,8 @@ func RegisterRoutes(r *gin.Engine, a *App) {
 
 	api.POST("get", a.GetShare)
 	api.GET("get", a.GetShare)
-	api.GET("download/:code", a.Download)
+	api.GET("download/:code", a.Download)       // 兼容：第一个内容
+	api.GET("download/:code/:item", a.Download) // 指定条目
 
 	admin := api.Group("admin")
 	admin.GET("status", a.AdminStatus)
