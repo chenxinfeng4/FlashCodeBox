@@ -1,4 +1,4 @@
-/* ============ FileSender — 单页双栏（发送 / 取件） ============ */
+/* ============ FileSender — 单页双栏（发送 / 取件）· 微信式聊天 ============ */
 
 :root {
   --bg: #f3f5fb;
@@ -12,33 +12,36 @@
   --danger: #dc2626;
   --danger-soft: #fef2f2;
   --ok: #059669;
+  --bubble-me: #95ec69;        /* 微信绿 */
+  --bubble-me-text: #17233b;
+  --bubble-file: #ffffff;
   --radius: 16px;
   --radius-s: 10px;
   --shadow: 0 1px 2px rgba(23, 25, 60, .04), 0 8px 24px -12px rgba(23, 25, 60, .12);
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "PingFang SC", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #101322;
-    --card: #181c2f;
-    --text: #e7eaf3;
-    --muted: #9aa3b8;
-    --line: #2a3050;
-    --accent: #6d64f0;
-    --accent-hover: #7f77f2;
-    --accent-soft: #232856;
-    --danger: #f87171;
-    --danger-soft: #2d1c22;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 30px -14px rgba(0, 0, 0, .5);
-  }
+html.theme-dark {
+  --bg: #101322;
+  --card: #181c2f;
+  --text: #e7eaf3;
+  --muted: #9aa3b8;
+  --line: #2a3050;
+  --accent: #6d64f0;
+  --accent-hover: #7f77f2;
+  --accent-soft: #232856;
+  --danger: #f87171;
+  --danger-soft: #2d1c22;
+  --bubble-me: #3d6b2f;
+  --bubble-me-text: #eaffe4;
+  --bubble-file: #1f2440;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 10px 30px -14px rgba(0, 0, 0, .5);
 }
 
 * { box-sizing: border-box; }
 
-/* 关键：带 display 规则的元素（.layout/.stack/.filechip 等）设置 hidden 属性时，
-   作者样式会覆盖 UA 的 [hidden]{display:none}，必须强制兜底，
-   否则管理卡片/登录表单会常显在主界面上。 */
+/* 关键：带 display 规则的元素（.layout/.composer 等）设置 hidden 属性时，
+   作者样式会覆盖 UA 的 [hidden]{display:none}，必须强制兜底。 */
 [hidden] { display: none !important; }
 
 html, body { margin: 0; padding: 0; }
@@ -78,6 +81,7 @@ body {
 }
 .brand-name { font-size: 18px; font-weight: 700; letter-spacing: .5px; }
 .brand-sub { font-size: 12px; color: var(--muted); }
+.topbar-nav { display: flex; align-items: center; gap: 6px; }
 .admin-link {
   color: var(--muted);
   text-decoration: none;
@@ -86,6 +90,21 @@ body {
   border-radius: 8px;
 }
 .admin-link:hover { color: var(--accent); background: var(--accent-soft); }
+.theme-btn {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  font-size: 16px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  transition: all .15s;
+}
+.theme-btn:hover { background: var(--accent-soft); }
 
 .banner {
   margin: 0 clamp(16px, 4vw, 40px) 4px;
@@ -96,9 +115,7 @@ body {
   color: #92400e;
   font-size: 14px;
 }
-@media (prefers-color-scheme: dark) {
-  .banner { background: #332614; border-color: #5c4a1e; color: #fcd34d; }
-}
+html.theme-dark .banner { background: #332614; border-color: #5c4a1e; color: #fcd34d; }
 .banner a { color: inherit; font-weight: 600; }
 
 /* ---------- 布局 ---------- */
@@ -147,7 +164,139 @@ body {
 .dot-get  { background: var(--ok); box-shadow: 0 0 0 4px rgba(5, 150, 105, .15); }
 .dot-admin{ background: #d97706; box-shadow: 0 0 0 4px rgba(217, 119, 6, .15); }
 
-/* ---------- 聊天式输入框 ---------- */
+/* ---------- 聊天窗口（发送） ---------- */
+.chat-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  min-height: 34px;
+}
+.expire-inline { display: flex; gap: 6px; }
+.expire-inline select,
+.expire-inline input {
+  width: auto;
+  padding: 5px 8px;
+  font-size: 13px;
+  border-radius: 8px;
+}
+.expire-inline input { width: 64px; }
+.expire-inline select { min-width: 0; }
+.chat-head-spacer { flex: 1; }
+.chat-code-area { display: flex; align-items: center; gap: 6px; }
+.chat-code-label { font-size: 12px; color: var(--muted); }
+.chat-code {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: var(--accent);
+  user-select: all;
+}
+.iconbtn {
+  border: 0; background: transparent; color: var(--muted);
+  font-size: 15px; cursor: pointer; padding: 4px 6px; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.iconbtn:hover { color: var(--accent); background: var(--accent-soft); }
+
+.chat-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 140px;
+  max-height: 380px;
+  overflow-y: auto;
+  padding: 12px 4px;
+}
+
+/* 消息行：自己发的靠右（微信"我"的视角） */
+.msg { display: flex; justify-content: flex-end; align-items: flex-start; gap: 6px; }
+.msg-bubble {
+  max-width: 78%;
+  padding: 8px 12px;
+  border-radius: 12px 2px 12px 12px;
+  background: var(--bubble-me);
+  color: var(--bubble-me-text);
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  position: relative;
+}
+.msg.file .msg-bubble { padding: 8px; }
+.msg.pending .msg-bubble { opacity: .6; border: 1.5px dashed var(--line); }
+.msg.failed .msg-bubble { opacity: .9; outline: 1.5px solid var(--danger); }
+
+.filebubble {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bubble-file) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--line);
+  min-width: 200px;
+  padding: 10px 12px !important;
+  border-radius: 12px 2px 12px 12px;
+}
+.filebubble-icon { color: var(--accent); flex: none; }
+.filebubble-info { flex: 1; min-width: 0; }
+.filebubble-name {
+  font-weight: 600;
+  font-size: 13.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filebubble-size { font-size: 12px; color: var(--muted); }
+
+.msg-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .12);
+  margin-top: 6px;
+  overflow: hidden;
+  display: none;
+}
+.msg.sending .msg-progress { display: block; }
+.msg-progress .bar {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width .2s;
+}
+
+.msg-state {
+  align-self: center;
+  flex: none;
+  width: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.msg-state .spinner {
+  width: 14px; height: 14px;
+  border: 2px solid var(--accent-soft);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.msg-state .retry {
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 17px;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.msg-state .retry:hover { background: var(--danger-soft); }
+.msg.sending .msg-state, .msg.sent .msg-state, .msg.pending .msg-state .retry { display: none; }
+.msg.pending .msg-state { display: none; }
+.msg.failed .msg-state { display: inline-flex; }
+
+/* ---------- 输入区 ---------- */
 .composer {
   border: 1.5px solid var(--line);
   border-radius: 12px;
@@ -167,8 +316,8 @@ body {
   border-radius: 0;
   resize: none;
   padding: 12px 14px 6px;
-  min-height: 52px;
-  max-height: 180px;
+  min-height: 48px;
+  max-height: 160px;
   width: 100%;
   display: block;
 }
@@ -176,7 +325,7 @@ body {
 .composer-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 6px 10px 10px;
 }
 .attachbtn {
@@ -194,40 +343,23 @@ body {
   transition: all .15s;
 }
 .attachbtn:hover { color: var(--accent); background: var(--accent-soft); }
-
-.expire-inline { display: flex; gap: 6px; margin-left: auto; }
-.expire-inline select,
-.expire-inline input {
-  width: auto;
-  padding: 6px 8px;
-  font-size: 13px;
+.composer-bar .spacer { flex: 1; }
+.sendbtn {
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  width: 38px;
+  height: 34px;
   border-radius: 8px;
-}
-.expire-inline input { width: 68px; }
-.expire-inline select { min-width: 0; }
-
-.attach-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px 0; }
-.attach-list:empty { display: none; }
-.attchip {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 8px 5px 10px;
-  border-radius: 8px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 13px;
-  max-width: 100%;
+  justify-content: center;
+  flex: none;
+  transition: background .15s, opacity .15s;
 }
-.attchip-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 200px;
-  font-weight: 600;
-  color: var(--text);
-}
-.attchip .iconbtn { padding: 0 4px; font-size: 13px; }
+.sendbtn:hover { background: var(--accent-hover); }
+.sendbtn:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ---------- 表单元素 ---------- */
 textarea, input, select {
@@ -277,89 +409,8 @@ textarea:focus, input:focus, select:focus {
 .btn:disabled { opacity: .55; cursor: not-allowed; }
 .btn-block { width: 100%; padding: 11px; font-size: 15px; }
 
-.iconbtn {
-  border: 0; background: transparent; color: var(--muted);
-  font-size: 15px; cursor: pointer; padding: 4px 6px; border-radius: 6px;
-}
-.iconbtn:hover { color: var(--danger); background: var(--danger-soft); }
-
 .row-between { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
 .hint { color: var(--muted); font-size: 12.5px; }
-
-/* ---------- 取件码卡片 ---------- */
-.codecard {
-  margin-top: 16px;
-  padding: 16px 18px;
-  border-radius: 12px;
-  background: var(--bg);
-  border: 1px dashed var(--line);
-}
-.codecard-main {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.sent-items {
-  margin: 10px 0 2px;
-  padding: 8px 4px 0;
-  list-style: none;
-  border-top: 1px solid var(--line);
-}
-.sent-items li {
-  font-size: 13px;
-  color: var(--muted);
-  padding: 3px 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ---------- 进度条 ---------- */
-.progress { margin-top: 14px; }
-.progress-track {
-  height: 8px;
-  background: var(--bg);
-  border-radius: 999px;
-  overflow: hidden;
-}
-.progress-bar {
-  height: 100%;
-  width: 0%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent), #8b5cf6);
-  transition: width .2s;
-}
-
-/* ---------- 结果 ---------- */
-.result {
-  margin-top: 18px;
-  padding: 18px;
-  border-radius: 12px;
-  background: var(--bg);
-  border: 1px dashed var(--line);
-  text-align: center;
-}
-.result-code-label { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
-.result-code {
-  font-family: var(--mono);
-  font-size: 46px;
-  font-weight: 800;
-  letter-spacing: 10px;
-  color: var(--accent);
-  text-indent: 10px; /* balance letter-spacing */
-  user-select: all;
-}
-.result-meta { margin-top: 2px; }
-.result-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-  flex-wrap: wrap;
-  margin-top: 14px;
-}
-.result > p.hint { margin: 12px 0 0; }
 
 /* ---------- 取件 ---------- */
 .get-form { display: flex; gap: 10px; }
@@ -382,12 +433,14 @@ textarea:focus, input:focus, select:focus {
   margin: 4px 0 16px;
   text-align: left;
 }
+/* 对方发的消息靠左（微信视角） */
+.bubble-wrap { display: flex; justify-content: flex-start; }
 .bubble {
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 12px 12px 12px 4px;
-  padding: 10px 14px;
-  max-width: 100%;
+  border-radius: 12px 12px 12px 2px;
+  padding: 9px 12px;
+  max-width: 85%;
 }
 .bubble pre {
   margin: 0;
@@ -398,6 +451,7 @@ textarea:focus, input:focus, select:focus {
   max-height: 320px;
   overflow: auto;
   user-select: all;
+  color: var(--text);
 }
 .bubble-bar { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
 .bubble-bar .btn { padding: 4px 12px; font-size: 13px; }
@@ -405,11 +459,12 @@ textarea:focus, input:focus, select:focus {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 14px 16px;
+  padding: 12px 16px;
   border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--bg);
+  border-radius: 12px 12px 12px 2px;
+  background: var(--card);
   color: var(--accent);
+  max-width: 85%;
 }
 .filecard-info { flex: 1; min-width: 0; }
 .filecard-name {

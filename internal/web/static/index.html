@@ -18,8 +18,9 @@
     <span class="brand-name" id="siteName">文件快递</span>
     <span class="brand-sub" id="siteDesc"></span>
   </a>
-  <nav>
+  <nav class="topbar-nav">
     <a href="#/admin" class="admin-link">管理</a>
+    <button class="theme-btn" id="themeBtn" type="button" title="切换明暗主题" aria-label="切换明暗主题">🌙</button>
   </nav>
 </header>
 
@@ -30,62 +31,52 @@
 <!-- ===================== 主视图：发送 + 取件 ===================== -->
 <main class="layout" id="mainView">
 
-  <!-- 发送：聊天式输入框，文字+文件混搭、可多次追加 -->
+  <!-- 发送：微信式聊天窗口，文字+文件混搭 -->
   <section class="card" id="sendPanel" aria-label="发送">
-    <div class="card-head">
-      <h2><span class="dot dot-send"></span>发送</h2>
-      <span class="hint" id="shareState">同一个输入框可反复追加，共用一个取件码</span>
+    <div class="chat-head">
+      <div class="expire-inline" id="expireCtrl" title="有效期">
+        <select id="expireStyle" aria-label="有效期单位">
+          <option value="day" selected>天</option>
+          <option value="hour">小时</option>
+          <option value="minute">分钟</option>
+          <option value="count">可取次数</option>
+          <option value="forever">永久</option>
+        </select>
+        <input id="expireValue" type="number" value="3" min="1" max="9999" aria-label="有效期数值">
+      </div>
+      <div class="chat-head-spacer"></div>
+      <div class="chat-code-area" id="codeArea" hidden>
+        <span class="chat-code-label">取件码</span>
+        <span class="chat-code" id="resultCode">—</span>
+        <button class="iconbtn" id="copyCodeBtn" type="button" title="复制取件码" aria-label="复制取件码">
+          <svg viewBox="0 0 24 24" width="15" height="15"><rect x="9" y="9" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M5 15V5a2 2 0 012-2h10" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+        </button>
+        <button class="iconbtn" id="copyLinkBtn" type="button" title="复制取件链接" aria-label="复制取件链接">
+          <svg viewBox="0 0 24 24" width="15" height="15"><path d="M10 14a5 5 0 007.5.5l3-3a5 5 0 00-7-7l-1.7 1.7" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M14 10a5 5 0 00-7.5-.5l-3 3a5 5 0 007 7l1.7-1.7" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <button class="iconbtn" id="newShareBtn" type="button" title="新开分享" aria-label="新开分享" hidden>
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
     </div>
 
+    <div class="chat-flow" id="chatFlow"></div>
+
     <div class="composer" id="composer">
-      <div class="attach-list" id="attachList"></div>
-      <textarea id="sendText" rows="2"
-        placeholder="输入要分享的文字，或点 📎 添加文件…&#10;文字和文件可混搭，发送后还能继续追加"></textarea>
+      <textarea id="sendText" rows="1" placeholder="输入消息…"></textarea>
       <div class="composer-bar">
         <button class="attachbtn" id="attachBtn" type="button" title="添加文件（可多选）" aria-label="添加文件">
           <svg viewBox="0 0 24 24" width="20" height="20"><path d="M21 12.5l-8.5 8.5a5.5 5.5 0 01-7.8-7.8l8.9-8.9a3.7 3.7 0 015.2 5.2l-8.9 8.9a1.8 1.8 0 01-2.6-2.6l8.2-8.2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <input type="file" id="fileInput" multiple hidden>
-        <div class="expire-inline" id="expireCtrl" title="有效期（生成取件码时生效）">
-          <select id="expireStyle" aria-label="有效期单位">
-            <option value="day" selected>天</option>
-            <option value="hour">小时</option>
-            <option value="minute">分钟</option>
-            <option value="count">可取次数</option>
-            <option value="forever">永久</option>
-          </select>
-          <input id="expireValue" type="number" value="3" min="1" max="9999" aria-label="有效期数值">
-        </div>
-        <button class="btn primary" id="sendBtn" type="button">生成取件码</button>
-      </div>
-      <div class="progress" id="progress" hidden>
-        <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
-        <div class="row-between">
-          <span class="hint" id="progressText">准备上传…</span>
-          <span class="hint" id="progressSpeed"></span>
-        </div>
+        <div class="spacer"></div>
+        <button class="sendbtn" id="sendBtn" type="button" title="发送" aria-label="发送">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
       </div>
     </div>
 
     <div class="alert err" id="sendError" hidden></div>
-
-    <div class="codecard" id="sendResult" hidden>
-      <div class="codecard-main">
-        <div>
-          <div class="result-code-label">取件码</div>
-          <div class="result-code" id="resultCode">—</div>
-        </div>
-        <div class="result-actions">
-          <button class="btn" id="copyCodeBtn">复制取件码</button>
-          <button class="btn" id="copyLinkBtn">复制取件链接</button>
-        </div>
-      </div>
-      <ul class="sent-items" id="sentItems"></ul>
-      <div class="row-between">
-        <span class="hint" id="resultMeta"></span>
-        <button class="btn ghost" id="newShareBtn">新开分享</button>
-      </div>
-    </div>
   </section>
 
   <!-- 取件 -->

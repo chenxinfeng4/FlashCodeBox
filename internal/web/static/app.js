@@ -3,7 +3,7 @@
  * 设计约束：
  *  1) 所有请求一律使用相对路径（"api/..."），部署在任意反代子路径下都成立
  *  2) 发送与取件同页，hash 路由：#/c/取件码、#/admin
- *  3) 发送区是聊天式输入框：文字 + 多文件混搭，生成取件码后可继续追加
+ *  3) 发送区是微信式聊天窗口：文字+文件成为气泡，取件码后可继续发
  *  4) 大文件默认走分片上传（并发 3、失败退避重试、断点续传）
  * ============================================================ */
 'use strict';
@@ -14,12 +14,25 @@ const state = {
   config: null,
   composer: {
     code: null,      // 当前分享的取件码（null = 尚未生成）
-    items: [],       // 已放入分享的内容（本地展示用）
-    pending: [],     // 待发送的文件（File 对象）
-    sending: false,
+    messages: [],    // {uid, kind:'text'|'file', text?, file?, status, pct, err?}
+    busy: false,
   },
   adminPage: 1,
 };
+
+let msgSeq = 0;
+
+/* ---------------- 主题 ---------------- */
+
+function applyTheme(dark, persist) {
+  document.documentElement.classList.toggle('theme-dark', dark);
+  $('themeBtn').textContent = dark ? '☀️' : '🌙';
+  if (persist) localStorage.setItem('fs_theme', dark ? 'dark' : 'light');
+}
+
+$('themeBtn').addEventListener('click', () => {
+  applyTheme(!document.documentElement.classList.contains('theme-dark'), true);
+});
 
 /* ---------------- 基础工具 ---------------- */
 
@@ -108,26 +121,16 @@ async function sha256Hex(blob) {
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/* ---------------- 发送：聊天式输入框 ---------------- */
+/* ---------------- 发送：聊天流 ---------------- */
 
 function autogrow() {
   const el = $('sendText');
   el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 180) + 'px';
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px';
 }
 $('sendText').addEventListener('input', autogrow);
 
 function fileKey(file) { return `${file.name}:${file.size}:${file.lastModified}`; }
-
-function validateFile(file) {
-  if (state.config && file.size > state.config.max_upload_size) {
-    return `文件超过大小限制（最大 ${humanBytes(state.config.max_upload_size)}）`;
-  }
-  if (state.config && !typesAllowed(file.name)) {
-    return '文件类型不被允许';
-  }
-  return null;
-}
 
 function typesAllowed(name) {
   const list = (state.config && state.config.allowed_types) || ['*'];
@@ -137,78 +140,36 @@ function typesAllowed(name) {
   return list.includes(name.slice(i + 1).toLowerCase());
 }
 
-function addPendingFiles(files) {
+function validateFile(file) {
+  if (state.config && file.size > state.config.max_upload_size) {
+    return `超过大小限制（最大 ${humanBytes(state.config.max_upload_size)}）`;
+  }
+  if (state.config && !typesAllowed(file.name)) return '类型不被允许';
+  return null;
+}
+
+// 选择/拖拽/粘贴的文件立即进入消息流（pending 状态，点发送才上传）
+function addFiles(files) {
   hideError('sendError');
+  const cp = state.composer;
   for (const f of files) {
     if (f.size === 0) { showError('sendError', `「${f.name}」是空文件，已跳过`); continue; }
     const err = validateFile(f);
-    if (err) { showError('sendError', `「${f.name}」：${err}，已跳过`); continue; }
-    if (state.composer.pending.some((p) => fileKey(p) === fileKey(f))) continue;
-    if (state.composer.pending.length + 1 > 100) {
-      showError('sendError', '单次最多添加 100 个文件');
-      break;
-    }
-    state.composer.pending.push(f);
+    if (err) { showError('sendError', `「${f.name}」${err}，已跳过`); continue; }
+    if (cp.messages.some((m) => m.kind === 'file' && fileKey(m.file) === fileKey(f))) continue;
+    if (cp.messages.length >= 100) { showError('sendError', '单个分享最多 100 条内容'); break; }
+    cp.messages.push({ uid: ++msgSeq, kind: 'file', file: f, status: 'pending' });
   }
-  renderPending();
-}
-
-function renderPending() {
-  const wrap = $('attachList');
-  wrap.textContent = '';
-  state.composer.pending.forEach((f, idx) => {
-    const chip = document.createElement('span');
-    chip.className = 'attchip';
-
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 24 24');
-    svg.setAttribute('width', '14');
-    svg.setAttribute('height', '14');
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', 'M14 3v5h5M6 3h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5a2 2 0 012-2z');
-    path.setAttribute('stroke', 'currentColor');
-    path.setAttribute('stroke-width', '1.8');
-    path.setAttribute('fill', 'none');
-    svg.appendChild(path);
-    chip.appendChild(svg);
-
-    const name = document.createElement('span');
-    name.className = 'attchip-name';
-    name.textContent = f.name;
-    name.title = `${f.name}（${humanBytes(f.size)}）`;
-    chip.appendChild(name);
-
-    const size = document.createElement('span');
-    size.className = 'hint';
-    size.textContent = humanBytes(f.size);
-    chip.appendChild(size);
-
-    const del = document.createElement('button');
-    del.className = 'iconbtn';
-    del.textContent = '✕';
-    del.title = '移除';
-    del.addEventListener('click', () => {
-      state.composer.pending.splice(idx, 1);
-      renderPending();
-    });
-    chip.appendChild(del);
-
-    wrap.appendChild(chip);
-  });
-}
-
-function clearPending() {
-  state.composer.pending = [];
-  renderPending();
+  renderChat();
 }
 
 $('attachBtn').addEventListener('click', () => $('fileInput').click());
 $('fileInput').addEventListener('change', () => {
-  addPendingFiles(Array.from($('fileInput').files || []));
+  addFiles(Array.from($('fileInput').files || []));
   $('fileInput').value = '';
 });
 
-// 拖拽文件到输入框
+// 拖拽文件到聊天窗口
 const composer = $('composer');
 ['dragover', 'dragenter'].forEach((ev) =>
   composer.addEventListener(ev, (e) => { e.preventDefault(); composer.classList.add('dragover'); }));
@@ -216,7 +177,7 @@ const composer = $('composer');
   composer.addEventListener(ev, (e) => { e.preventDefault(); composer.classList.remove('dragover'); }));
 composer.addEventListener('drop', (e) => {
   const files = e.dataTransfer && e.dataTransfer.files;
-  if (files && files.length) addPendingFiles(Array.from(files));
+  if (files && files.length) addFiles(Array.from(files));
 });
 // 拖到页面其他位置也别让浏览器直接打开文件
 document.addEventListener('dragover', (e) => e.preventDefault());
@@ -227,26 +188,14 @@ document.addEventListener('paste', (e) => {
   const files = e.clipboardData && e.clipboardData.files;
   if (files && files.length) {
     e.preventDefault();
-    addPendingFiles(Array.from(files));
+    addFiles(Array.from(files));
   }
 });
 
 /* ---------------- 分片上传 ---------------- */
 
-function updateProgress(done, total, startTime, label) {
-  const pct = total ? Math.round((done / total) * 100) : 0;
-  $('progressBar').style.width = pct + '%';
-  $('progressText').textContent = (label ? label + ' · ' : '') +
-    `${humanBytes(done)} / ${humanBytes(total)}（${pct}%）`;
-  const sec = (Date.now() - startTime) / 1000;
-  if (sec > 0.5) $('progressSpeed').textContent = humanBytes(done / sec) + '/s';
-}
-
-/**
- * 分片上传一个文件并追加到分享。
- * @param code 现有取件码；为空时由 complete 的 expire 参数创建新分享
- */
-async function uploadFile(file, expire, code) {
+async function uploadFile(msg, expire, code) {
+  const file = msg.file;
   // 1) 初始化或续传：localStorage 里存着上次未完成的 upload_id
   let session = null;
   const savedId = localStorage.getItem('fs_up_' + fileKey(file));
@@ -268,14 +217,15 @@ async function uploadFile(file, expire, code) {
 
   // 2) 并发上传分片
   const uploaded = new Set(session.uploaded || []);
-  const startTime = Date.now();
   let completedBytes = 0;
   uploaded.forEach((i) => { completedBytes += Math.min(chunk_size, file.size - i * chunk_size); });
-  updateProgress(completedBytes, file.size, startTime, file.name);
+  msg.pct = file.size ? Math.round((completedBytes / file.size) * 100) : 100;
+  updateMsgProgress(msg);
 
   let next = 0;
   let failure = null;
   const WORKERS = 3;
+  const startTime = Date.now();
 
   async function worker() {
     while (!failure) {
@@ -296,12 +246,12 @@ async function uploadFile(file, expire, code) {
             headers,
           });
           if (!res.ok) {
-            let msg = `分片 ${i + 1} 上传失败（HTTP ${res.status}）`;
+            let m = `分片上传失败（HTTP ${res.status}）`;
             try {
               const j = await res.json();
-              if (j && j.message) msg = j.message;
+              if (j && j.message) m = j.message;
             } catch (_) { /* ignore */ }
-            throw new Error(msg);
+            throw new Error(m);
           }
           break;
         } catch (err) {
@@ -312,22 +262,110 @@ async function uploadFile(file, expire, code) {
       }
       uploaded.add(i);
       completedBytes += blob.size;
-      updateProgress(completedBytes, file.size, startTime, file.name);
+      msg.pct = file.size ? Math.round((completedBytes / file.size) * 100) : 100;
+      updateMsgProgress(msg);
     }
   }
   await Promise.all(Array.from({ length: WORKERS }, worker));
   if (failure) throw failure;
 
-  // 3) 合并并追加到分享
+  // 3) 合并并放入分享
   const body = {};
   if (code) body.code = code;
   else { body.expire_value = expire.value; body.expire_style = expire.style; }
-  const result = await apiFetch(`api/upload/${encodeURIComponent(upload_id)}/complete`, { json: body });
-  localStorage.removeItem('fs_up_' + fileKey(file));
-  return result;
+  return apiFetch(`api/upload/${encodeURIComponent(upload_id)}/complete`, { json: body });
 }
 
-/* ---------------- 发送主流程：可反复追加 ---------------- */
+function updateMsgProgress(msg) {
+  const el = document.querySelector(`[data-uid="${msg.uid}"] .msg-progress .bar`);
+  if (el) el.style.width = (msg.pct || 0) + '%';
+}
+
+/* ---------------- 消息流渲染 ---------------- */
+
+function renderChat() {
+  const cp = state.composer;
+  const flow = $('chatFlow');
+  flow.textContent = '';
+
+  for (const m of cp.messages) {
+    const row = document.createElement('div');
+    row.className = `msg ${m.kind} ${m.status}`;
+    row.dataset.uid = m.uid;
+
+    const bubble = document.createElement('div');
+    bubble.className = m.kind === 'file' ? 'msg-bubble filebubble' : 'msg-bubble';
+
+    if (m.kind === 'text') {
+      bubble.textContent = m.text;
+    } else {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('width', '30');
+      svg.setAttribute('height', '30');
+      svg.setAttribute('class', 'filebubble-icon');
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', 'M14 3v5h5M6 3h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5a2 2 0 012-2z');
+      p.setAttribute('stroke', 'currentColor');
+      p.setAttribute('stroke-width', '1.6');
+      p.setAttribute('fill', 'none');
+      svg.appendChild(p);
+      bubble.appendChild(svg);
+
+      const info = document.createElement('div');
+      info.className = 'filebubble-info';
+      const nm = document.createElement('div');
+      nm.className = 'filebubble-name';
+      nm.textContent = m.file.name;
+      nm.title = m.file.name;
+      const sz = document.createElement('div');
+      sz.className = 'filebubble-size';
+      sz.textContent = humanBytes(m.file.size);
+      info.append(nm, sz);
+      bubble.appendChild(info);
+
+      const prog = document.createElement('div');
+      prog.className = 'msg-progress';
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.width = (m.pct || 0) + '%';
+      prog.appendChild(bar);
+      bubble.appendChild(prog);
+    }
+    row.appendChild(bubble);
+
+    // 右侧状态：发送中转圈 / 失败重试
+    const stateEl = document.createElement('div');
+    stateEl.className = 'msg-state';
+    if (m.status === 'sending') {
+      const sp = document.createElement('div');
+      sp.className = 'spinner';
+      stateEl.appendChild(sp);
+    } else if (m.status === 'failed') {
+      const btn = document.createElement('button');
+      btn.className = 'retry';
+      btn.textContent = '⚠';
+      btn.title = (m.err || '发送失败') + '，点击重试';
+      btn.addEventListener('click', () => { m.status = 'sending'; renderChat(); doSend(); });
+      stateEl.appendChild(btn);
+    }
+    row.appendChild(stateEl);
+
+    flow.appendChild(row);
+  }
+  flow.scrollTop = flow.scrollHeight;
+
+  // 头部状态
+  $('codeArea').hidden = !cp.code;
+  $('newShareBtn').hidden = !cp.code;
+  $('expireCtrl').hidden = !!cp.code;
+  if (cp.code) $('resultCode').textContent = cp.code;
+}
+
+function setSendingUI(on) {
+  state.composer.busy = on;
+  $('sendBtn').disabled = on;
+}
 
 function readExpire() {
   let value = parseInt($('expireValue').value, 10);
@@ -336,119 +374,82 @@ function readExpire() {
   return { value, style: $('expireStyle').value };
 }
 
-function setSendingUI(on) {
-  state.composer.sending = on;
-  $('sendBtn').disabled = on;
-  $('sendBtn').textContent = on
-    ? '发送中…'
-    : (state.composer.code ? '追加并发送' : '生成取件码');
-}
-
-function renderCodeCard() {
-  const cp = state.composer;
-  if (!cp.code) {
-    $('sendResult').hidden = true;
-    $('shareState').textContent = '同一个输入框可反复追加，共用一个取件码';
-    return;
-  }
-  $('resultCode').textContent = cp.code;
-  const list = $('sentItems');
-  list.textContent = '';
-  cp.items.forEach((it) => {
-    const li = document.createElement('li');
-    li.textContent = (it.type === 'text' ? '✏️ ' : '📎 ') + it.label;
-    list.appendChild(li);
-  });
-  $('resultMeta').textContent = `已包含 ${cp.items.length} 项内容 · 还可以继续追加`;
-  $('sendResult').hidden = false;
-  $('shareState').textContent = `取件码 ${cp.code} · 可继续追加`;
-  $('expireCtrl').hidden = true;
-}
-
 async function doSend() {
   const cp = state.composer;
-  if (cp.sending) return;
+  if (cp.busy) return;
+
+  const text = $('sendText').value.trim();
+  const hasPendingFiles = cp.messages.some((m) => m.kind === 'file' && m.status === 'pending');
+  if (!text && !hasPendingFiles) return;
+  if (!cp.code && $('expireCtrl').hidden) { /* 不会发生，防御 */ }
   hideError('sendError');
 
-  const text = $('sendText').value;
-  const files = cp.pending.slice();
-  if (!text.trim() && !files.length) {
-    showError('sendError', '先输入文字或添加文件');
-    return;
+  // 文字入流
+  if (text) {
+    cp.messages.push({ uid: ++msgSeq, kind: 'text', text, status: 'sending' });
+    $('sendText').value = '';
+    autogrow();
+  }
+  // 待发文件转为 sending
+  for (const m of cp.messages) {
+    if (m.kind === 'file' && m.status === 'pending') m.status = 'sending';
   }
   setSendingUI(true);
-  let code = cp.code;
-  const sent = cp.items.slice();
+  renderChat();
 
-  try {
-    // 1) 文字先入分享
-    if (text.trim()) {
-      const body = { text };
-      if (code) body.code = code;
-      else {
-        const ex = readExpire();
-        body.expire_value = ex.value;
-        body.expire_style = ex.style;
+  for (const m of cp.messages) {
+    if (m.status !== 'sending') continue;
+    try {
+      if (m.kind === 'text') {
+        const body = { text: m.text };
+        if (cp.code) body.code = cp.code;
+        else {
+          const ex = readExpire();
+          body.expire_value = ex.value;
+          body.expire_style = ex.style;
+        }
+        const r = await apiFetch('api/send/text', { json: body });
+        cp.code = r.code;
+        m.status = 'sent';
+      } else {
+        const r = await uploadFile(m, readExpire(), cp.code);
+        cp.code = r.code;
+        m.status = 'sent';
       }
-      const r = await apiFetch('api/send/text', { json: body });
-      code = r.code;
-      sent.push({ type: 'text', label: r.item_label });
-      $('sendText').value = '';
-      autogrow();
+    } catch (e) {
+      m.status = 'failed';
+      m.err = e.message;
     }
-
-    // 2) 文件逐个分片上传（串行，进度按文件展示）
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      $('progress').hidden = false;
-      updateProgress(0, f.size, Date.now(), `（${i + 1}/${files.length}）${f.name}`);
-      const r = await uploadFile(f, readExpire(), code);
-      code = r.code;
-      sent.push({ type: 'file', label: `${f.name}（${humanBytes(f.size)}）` });
-    }
-
-    // 3) 全部成功：更新本地状态
-    cp.code = code;
-    cp.items = sent;
-    clearPending();
-    $('progress').hidden = true;
-    renderCodeCard();
-  } catch (e) {
-    // 失败的文件留在待发送列表，改完可直接重试
-    cp.pending = cp.pending.filter((f) => !sent.some((s) => s.type === 'file' && s.label.startsWith(f.name)));
-    renderPending();
-    if (code && !cp.code) {
-      cp.code = code;
-      cp.items = sent;
-      renderCodeCard();
-    }
-    $('progress').hidden = true;
-    showError('sendError', e.message + '（未发送的文件已保留，可重试）');
+    renderChat();
   }
   setSendingUI(false);
 }
 
 $('sendBtn').addEventListener('click', doSend);
+$('sendText').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    doSend();
+  }
+});
 
-// 新开分享：清空当前取件码状态（替代旧的"再发一个"）
+// 新开分享：清空聊天流与当前取件码
 $('newShareBtn').addEventListener('click', () => {
   state.composer.code = null;
-  state.composer.items = [];
-  $('sendResult').hidden = true;
-  $('expireCtrl').hidden = false;
+  state.composer.messages = [];
   hideError('sendError');
-  renderCodeCard();
+  renderChat();
   $('sendText').focus();
 });
 
 $('copyCodeBtn').addEventListener('click', async () => {
-  (await copyText(state.composer.code || '')) && flashButton($('copyCodeBtn'), '已复制 ✓');
+  (await copyText(state.composer.code || '')) && flashButton($('copyCodeBtn'), '✓');
 });
 $('copyLinkBtn').addEventListener('click', async () => {
   const code = state.composer.code;
   if (!code) return;
   const link = location.origin + location.pathname.replace(/index\.html$/, '') + '#/c/' + code;
-  (await copyText(link)) && flashButton($('copyLinkBtn'), '已复制 ✓');
+  (await copyText(link)) && flashButton($('copyLinkBtn'), '✓');
 });
 
 /* ---------------- 取件：渲染内容条目 ---------------- */
@@ -456,12 +457,15 @@ $('copyLinkBtn').addEventListener('click', async () => {
 function renderPick(data) {
   $('getResult').hidden = false;
   const items = data.items || [];
-  $('pickMeta').textContent = `共 ${items.length} 项内容 · ${expireText(data)}`;
+  $('pickMeta').textContent = `共 ${items.length} 项 · ${expireText(data)}`;
 
   const wrap = $('pickItems');
   wrap.textContent = '';
   for (const it of items) {
     if (it.type === 'text') {
+      const line = document.createElement('div');
+      line.className = 'bubble-wrap';
+
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
 
@@ -479,8 +483,12 @@ function renderPick(data) {
       });
       bar.appendChild(copyBtn);
       bubble.appendChild(bar);
-      wrap.appendChild(bubble);
+      line.appendChild(bubble);
+      wrap.appendChild(line);
     } else {
+      const line = document.createElement('div');
+      line.className = 'bubble-wrap';
+
       const card = document.createElement('div');
       card.className = 'filecard';
 
@@ -515,7 +523,8 @@ function renderPick(data) {
       a.href = it.download_url || `api/download/${encodeURIComponent(data.code)}/${it.id}`;
       card.appendChild(a);
 
-      wrap.appendChild(card);
+      line.appendChild(card);
+      wrap.appendChild(line);
     }
   }
 }
@@ -762,10 +771,10 @@ async function loadPublicConfig() {
   $('siteDesc').textContent = cfg.description || '';
   $('ver').textContent = 'v' + (cfg.version || '');
   $('setupBanner').hidden = !!cfg.initialized;
-  $('sizeLimit') && ($('sizeLimit').textContent = '');
 }
 
 (async function boot() {
+  applyTheme(localStorage.getItem('fs_theme') === 'dark', false);
   await loadPublicConfig();
   route();
 })();
