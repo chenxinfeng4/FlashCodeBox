@@ -105,7 +105,7 @@ async function apiFetch(path, options = {}) {
   if (state.chat.code && state.chat.token) {
     opts.headers['X-Room-Token'] = state.chat.token;
   }
-  const adminToken = localStorage.getItem('fs_admin_token');
+  const adminToken = sessionStorage.getItem('fs_admin_token');
   if (adminToken) opts.headers['Authorization'] = 'Bearer ' + adminToken;
   if (opts.json !== undefined) {
     opts.method = opts.method || 'POST';
@@ -256,14 +256,16 @@ function clearChat() {
 
 /* ---------------- 加入 / 退出 ---------------- */
 
+// 会话身份存 sessionStorage：每标签页独立——刷新保留、关标签即清、
+// 手动新开标签页是干净状态（用户要求会话不跨标签页）。
 function saveRoomLocal() {
   const c = state.chat;
   if (c.code && c.token) {
-    localStorage.setItem('fs_room', JSON.stringify({
+    sessionStorage.setItem('fs_room', JSON.stringify({
       code: c.code, role: c.role, token: c.token,
     }));
   } else {
-    localStorage.removeItem('fs_room');
+    sessionStorage.removeItem('fs_room');
   }
 }
 
@@ -426,7 +428,7 @@ function updateMsgProgress(msg) {
 async function uploadFile(msg, expire, code, token) {
   const file = msg.file;
   let session = null;
-  const savedId = localStorage.getItem('fs_up_' + fileKey(file));
+  const savedId = sessionStorage.getItem('fs_up_' + fileKey(file));
   if (savedId) {
     try { session = await apiFetch(`api/upload/${encodeURIComponent(savedId)}/status`); }
     catch (_) { session = null; }
@@ -441,7 +443,7 @@ async function uploadFile(msg, expire, code, token) {
     });
   }
   const { upload_id, chunk_size, total_chunks } = session;
-  localStorage.setItem('fs_up_' + fileKey(file), upload_id);
+  sessionStorage.setItem('fs_up_' + fileKey(file), upload_id);
 
   const uploaded = new Set(session.uploaded || []);
   const chunkLen = (i) => Math.min(chunk_size, file.size - i * chunk_size);
@@ -882,7 +884,7 @@ async function showAdmin() {
     return;
   }
   $('adminAuthTitle').textContent = '管理登录';
-  const token = localStorage.getItem('fs_admin_token');
+  const token = sessionStorage.getItem('fs_admin_token');
   if (!token) {
     $('loginForm').hidden = false;
     return;
@@ -893,7 +895,7 @@ async function showAdmin() {
     $('adminPanel').hidden = false;
     loadList(1);
   } catch (e) {
-    localStorage.removeItem('fs_admin_token');
+    sessionStorage.removeItem('fs_admin_token');
     $('loginForm').hidden = false;
     if (e.status !== 401) showError('adminAuthError', e.message);
   }
@@ -920,7 +922,7 @@ async function route() {
   // 无 hash：恢复上次会话
   if (!state.chat.joined) {
     try {
-      const saved = JSON.parse(localStorage.getItem('fs_room') || 'null');
+      const saved = JSON.parse(sessionStorage.getItem('fs_room') || 'null');
       if (saved && saved.code && saved.token) {
         await joinRoom(saved.code, saved.token);
       }
@@ -1041,7 +1043,7 @@ $('loginForm').addEventListener('submit', async (e) => {
   hideError('adminAuthError');
   try {
     const data = await apiFetch('api/admin/login', { json: { password: $('loginPassword').value } });
-    localStorage.setItem('fs_admin_token', data.token);
+    sessionStorage.setItem('fs_admin_token', data.token);
     $('loginPassword').value = '';
     showAdmin();
   } catch (err) {
@@ -1057,7 +1059,7 @@ $('setupForm').addEventListener('submit', async (e) => {
   if (pw !== $('setupPassword2').value) { showError('adminAuthError', '两次输入的密码不一致'); return; }
   try {
     const data = await apiFetch('api/admin/setup', { json: { password: pw } });
-    localStorage.setItem('fs_admin_token', data.token);
+    sessionStorage.setItem('fs_admin_token', data.token);
     $('setupPassword').value = '';
     $('setupPassword2').value = '';
     await loadPublicConfig();
@@ -1068,7 +1070,7 @@ $('setupForm').addEventListener('submit', async (e) => {
 });
 
 $('logoutBtn').addEventListener('click', () => {
-  localStorage.removeItem('fs_admin_token');
+  sessionStorage.removeItem('fs_admin_token');
   showAdmin();
 });
 
