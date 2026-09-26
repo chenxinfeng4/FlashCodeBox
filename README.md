@@ -36,7 +36,7 @@
 ### 方式 A：Docker（推荐）
 
 ```bash
-git clone https://github.com/<your-github>/FlashCodeBox.git
+git clone https://github.com/chenxinfeng4/FlashCodeBox.git
 cd FlashCodeBox
 docker compose up -d --build
 ```
@@ -47,7 +47,7 @@ docker compose up -d --build
 bash scripts/quickstart.sh
 ```
 
-也可以直接用已发布的镜像（把 `<your-github>` 换成实际仓库）：
+也可以直接用已发布的镜像：
 
 ```bash
 docker run -d --restart unless-stopped \
@@ -56,7 +56,7 @@ docker run -d --restart unless-stopped \
   -e TZ=Asia/Shanghai \
   --log-opt max-size=10m --log-opt max-file=3 \
   --name flashcodebox \
-  ghcr.io/<your-github>/flashcodebox:latest
+  ghcr.io/chenxinfeng4/flashcodebox:latest
 ```
 
 启动后打开 `http://localhost:12345` 即可。
@@ -260,6 +260,24 @@ frontend/           Vite + React 源码
 管理后台（`/#/admin`）可改站点名称、描述；限流次数填 `0` 即关闭。
 
 </details>
+
+## 致谢
+
+本项目的灵感来自 [FileCodeBox](https://github.com/vastsa/FileCodeBox)（文件快递柜）——「像取快递一样取文件」的匿名口令分享工具。感谢它用「一个短口令完成一次分享」的极简思路，启发了本项目的诞生。
+
+两者在核心理念上一脉相承：
+
+- **局域网自托管**：部署在自己的机器/内网，数据自主可控、不出网
+- **大文件**：分片上传，不惧大文件
+- **拖拽上传**：文件拖进页面即传（FlashCodeBox 另支持粘贴）
+- **口令（CODE）取件**：无需注册登录，凭短码/群号直接获取内容
+
+在此基础上，FlashCodeBox 做了两点不同的取舍：
+
+| | FileCodeBox | FlashCodeBox |
+|---|---|---|
+| **对话式交互** | 快递柜式：上传 → 生成口令 → 对方凭码取件 | **微信群式聊天窗**：发条消息即建群，传文件像发消息，对非技术人员更友好 |
+| **一个会话多次分享** | 一次分享对应一个口令，多次分享需多次操作 | **一个 session 持续收发**：群内可反复发送文字与多份文件，全员实时可见、随时下载 |
 
 ## 参与贡献
 

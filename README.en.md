@@ -34,7 +34,7 @@ Great for: **sharing meeting materials, moving large files between colleagues, s
 ### Docker (recommended)
 
 ```bash
-git clone https://github.com/<your-github>/FlashCodeBox.git
+git clone https://github.com/chenxinfeng4/FlashCodeBox.git
 cd FlashCodeBox
 docker compose up -d --build
 ```
@@ -45,7 +45,7 @@ Or use the one-shot script (builds the image if missing and prints the LAN URL):
 bash scripts/quickstart.sh
 ```
 
-Using a published image (replace `<your-github>`):
+Or use the published image directly:
 
 ```bash
 docker run -d --restart unless-stopped \
@@ -54,7 +54,7 @@ docker run -d --restart unless-stopped \
   -e TZ=Asia/Shanghai \
   --log-opt max-size=10m --log-opt max-file=3 \
   --name flashcodebox \
-  ghcr.io/<your-github>/flashcodebox:latest
+  ghcr.io/chenxinfeng4/flashcodebox:latest
 ```
 
 Then open `http://localhost:12345`.
@@ -174,6 +174,24 @@ Default per-file limit is 1 GiB, 5 MiB chunks — adjust both in the admin panel
 No. The background janitor deletes messages and files of expired groups. Back up the `-data` directory while stopped.
 
 </details>
+
+## Acknowledgements
+
+This project was inspired by [FileCodeBox](https://github.com/vastsa/FileCodeBox) — an anonymous passcode-sharing tool where you "pick up files like express delivery". Kudos to its elegant idea: one short passcode, one share.
+
+Both projects share the same core philosophy:
+
+- **Self-hosted / LAN friendly**: runs on your own machine; your data stays under your control
+- **Large files**: chunked uploads
+- **Drag & drop upload** (FlashCodeBox also supports paste)
+- **Passcode (CODE) access**: no sign-up, just a short code / group code
+
+On top of that, FlashCodeBox makes two different choices:
+
+| | FileCodeBox | FlashCodeBox |
+|---|---|---|
+| **Conversational UI** | Cabinet-style: upload → get a passcode → recipient picks up | **WeChat-style chat window**: sending the first message creates the group — sharing feels like chatting, friendlier for non-technical users |
+| **Multiple shares per session** | One share ↔ one passcode; repeat for every file | **Keep sending in one session**: send text and any number of files in the group; everyone sees them in real time and can download anytime |
 
 ## Contributing
 
