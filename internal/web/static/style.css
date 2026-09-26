@@ -36,6 +36,11 @@
 
 * { box-sizing: border-box; }
 
+/* 关键：带 display 规则的元素（.layout/.stack/.filechip 等）设置 hidden 属性时，
+   作者样式会覆盖 UA 的 [hidden]{display:none}，必须强制兜底，
+   否则管理卡片/登录表单会常显在主界面上。 */
+[hidden] { display: none !important; }
+
 html, body { margin: 0; padding: 0; }
 
 body {
