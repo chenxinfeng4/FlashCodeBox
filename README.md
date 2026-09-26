@@ -52,7 +52,7 @@ bash scripts/quickstart.sh
 ```bash
 docker run -d --restart unless-stopped \
   -p 12345:12345 \
-  -v ./data:/data \
+  -v flashcodebox-data:/data \
   -e TZ=Asia/Shanghai \
   --log-opt max-size=10m --log-opt max-file=3 \
   --name flashcodebox \
@@ -109,7 +109,7 @@ ADMIN_PASSWORD=yourpassword bash scripts/init-admin.sh
 
 ## Docker 部署
 
-`docker-compose.yml` 默认把数据放在 `./data`，端口 `12345`，可用 `.env` 覆盖：
+`docker-compose.yml` 默认使用**命名卷** `flashcodebox-data` 存放数据（开箱即用），端口 `12345`，可用 `.env` 覆盖：
 
 ```bash
 cp .env.example .env    # 可选：改端口/时区
@@ -118,9 +118,19 @@ docker compose logs -f
 docker compose down
 ```
 
-> **提示**：容器以非 root 用户（uid 1000）运行。若用宿主机目录做 bind mount，请确保可写：`sudo chown -R 1000:1000 ./data`。使用命名卷（named volume）则无需处理。
+想把数据放在宿主机目录，编辑 `docker-compose.yml` 换成 bind mount；容器以非 root 用户（uid 1000）运行，宿主目录需可写：
+
+```bash
+sudo mkdir -p ./data && sudo chown -R 1000:1000 ./data
+# 然后把 volumes 改为 - ./data:/data
+```
+
+用一键脚本 `quickstart.sh` 时会自动以当前用户身份运行，bind mount 也不会有权限问题。
 
 多架构镜像由 GitHub Actions 在推送 `v*` 标签时自动构建并发布到 GHCR（`linux/amd64`、`linux/arm64`），见 [`.github/workflows/docker.yml`](./.github/workflows/docker.yml)。
+
+> Dockerfile 默认使用国内镜像源（apk = 清华、npm = npmmirror、GOPROXY = goproxy.cn）。海外构建可覆盖：
+> `docker build --build-arg APK_MIRROR=dl-cdn.alpinelinux.org --build-arg NPM_REGISTRY=https://registry.npmjs.org --build-arg GOPROXY=https://proxy.golang.org,direct .`
 
 ## 配置
 

@@ -50,7 +50,7 @@ Using a published image (replace `<your-github>`):
 ```bash
 docker run -d --restart unless-stopped \
   -p 12345:12345 \
-  -v ./data:/data \
+  -v flashcodebox-data:/data \
   -e TZ=Asia/Shanghai \
   --log-opt max-size=10m --log-opt max-file=3 \
   --name flashcodebox \
@@ -58,6 +58,10 @@ docker run -d --restart unless-stopped \
 ```
 
 Then open `http://localhost:12345`.
+
+> `docker-compose.yml` uses a named volume (`flashcodebox-data`) so it works out of the box. The container runs as uid 1000; if you switch to a bind mount, `sudo chown -R 1000:1000 ./data` first (or use `scripts/quickstart.sh`, which runs as your own user).
+>
+> The Dockerfile defaults to China mirrors (apk = Tsinghua, npm = npmmirror, GOPROXY = goproxy.cn). Override for international builds: `docker build --build-arg APK_MIRROR=dl-cdn.alpinelinux.org --build-arg NPM_REGISTRY=https://registry.npmjs.org --build-arg GOPROXY=https://proxy.golang.org,direct .`
 
 ### Local binary (no Docker)
 
