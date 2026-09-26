@@ -240,13 +240,9 @@ export default function ChatPage({ config }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
 
+  // 建房有效期：控件已移除，固定默认 1 天（楼主可在设置弹层修改）
   function readExpire() {
-    const el = document.getElementById('expireValue');
-    const sel = document.getElementById('expireStyle');
-    let value = parseInt(el ? el.value : '1', 10);
-    if (!Number.isFinite(value) || value < 1) value = 1;
-    if (value > 9999) value = 9999;
-    return { value, style: sel ? sel.value : 'day' };
+    return { value: 1, style: 'day' };
   }
 
   function doSend() {
@@ -316,15 +312,6 @@ export default function ChatPage({ config }) {
   return (
     <section className="card chat" id="chatPanel" aria-label="聊天室">
       <div className="chat-head">
-        <div className="expire-inline" id="expireCtrl" title="有效期" hidden={joined}>
-          <select id="expireStyle" aria-label="有效期单位" defaultValue="day">
-            <option value="hour">小时</option>
-            <option value="day">天</option>
-            <option value="forever">永久</option>
-          </select>
-          <input id="expireValue" type="number" defaultValue="1" min="1" max="9999" aria-label="有效期数值" />
-        </div>
-        <span className="hint" id="roomState">{joined ? '' : '发送第一条消息自动创建会议'}</span>
         <div className="chat-head-spacer" />
         <div className="chat-code-area" id="codeArea" hidden={!joined}>
           <span className="chat-code-label">会议号</span>
