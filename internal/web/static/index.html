@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文件快递 · 用取件码收发文本与文件</title>
+<meta name="description" content=" FileSender —— 用取件码安全收发文本与文件，支持反向代理子路径部署">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%234f46e5'/%3E%3Cpath d='M7 9h10M7 13h7M12 17l3-3-3-3' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="./">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20"><path d="M7 9h10M7 13h7M12 17l3-3-3-3" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+    </span>
+    <span class="brand-name" id="siteName">文件快递</span>
+    <span class="brand-sub" id="siteDesc"></span>
+  </a>
+  <nav>
+    <a href="#/admin" class="admin-link">管理</a>
+  </nav>
+</header>
+
+<div class="banner" id="setupBanner" hidden>
+  首次使用：请先 <a href="#/admin">设置管理密码</a> 完成初始化。
+</div>
+
+<!-- ===================== 主视图：发送 + 取件 ===================== -->
+<main class="layout" id="mainView">
+
+  <!-- 发送 -->
+  <section class="card" id="sendPanel" aria-label="发送">
+    <div class="card-head">
+      <h2><span class="dot dot-send"></span>发送</h2>
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="text" role="tab">文本</button>
+        <button class="tab" data-tab="file" role="tab">文件</button>
+      </div>
+    </div>
+
+    <div class="pane" id="paneText">
+      <textarea id="sendText" rows="7" placeholder="输入要分享的文本、代码、链接…（可粘贴）"></textarea>
+      <div class="row-between">
+        <span class="hint" id="textCount">0 B</span>
+        <span class="hint" id="textLimit"></span>
+      </div>
+    </div>
+
+    <div class="pane" id="paneFile" hidden>
+      <input type="file" id="fileInput" hidden>
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="选择文件">
+        <svg viewBox="0 0 24 24" width="34" height="34" class="dz-icon"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+        <div class="dz-text">点击选择或拖拽文件到此处</div>
+        <div class="hint" id="sizeLimit"></div>
+      </div>
+      <div class="filechip" id="fileChip" hidden>
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M14 3v5h5M6 3h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5a2 2 0 012-2z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/></svg>
+        <span class="filechip-name" id="fileChipName"></span>
+        <span class="hint" id="fileChipSize"></span>
+        <button class="iconbtn" id="fileClear" title="移除文件" aria-label="移除文件">✕</button>
+      </div>
+    </div>
+
+    <div class="expire-row">
+      <label for="expireStyle">有效期</label>
+      <select id="expireStyle">
+        <option value="day" selected>天</option>
+        <option value="hour">小时</option>
+        <option value="minute">分钟</option>
+        <option value="count">可取次数</option>
+        <option value="forever">永久</option>
+      </select>
+      <input id="expireValue" type="number" value="3" min="1" max="9999">
+    </div>
+
+    <button class="btn primary btn-block" id="sendBtn">生成取件码</button>
+
+    <div class="progress" id="progress" hidden>
+      <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+      <div class="row-between">
+        <span class="hint" id="progressText">准备上传…</span>
+        <span class="hint" id="progressSpeed"></span>
+      </div>
+    </div>
+
+    <div class="result" id="sendResult" hidden>
+      <div class="result-code-label">取件码</div>
+      <div class="result-code" id="resultCode">—</div>
+      <div class="result-meta hint" id="resultMeta"></div>
+      <div class="result-actions">
+        <button class="btn" id="copyCodeBtn">复制取件码</button>
+        <button class="btn" id="copyLinkBtn">复制取件链接</button>
+        <button class="btn ghost" id="againBtn">再发一个</button>
+      </div>
+      <p class="hint">对方在本页右侧输入取件码即可领取；链接打开会自动填入取件码。</p>
+    </div>
+
+    <div class="alert err" id="sendError" hidden></div>
+  </section>
+
+  <!-- 取件 -->
+  <section class="card" id="getPanel" aria-label="取件">
+    <div class="card-head">
+      <h2><span class="dot dot-get"></span>取件</h2>
+    </div>
+
+    <form class="get-form" id="getForm">
+      <input id="getCode" class="code-input" placeholder="输入取件码" maxlength="5"
+             autocomplete="off" spellcheck="false" inputmode="numeric">
+      <button class="btn primary" id="getBtn" type="submit">取 件</button>
+    </form>
+
+    <div class="alert err" id="getError" hidden></div>
+
+    <div class="result" id="getResult" hidden>
+      <div class="pick-meta hint" id="pickMeta"></div>
+
+      <div id="pickTextWrap" hidden>
+        <pre class="text-box" id="pickText"></pre>
+        <div class="result-actions">
+          <button class="btn" id="copyTextBtn">复制内容</button>
+          <a class="btn ghost" id="pickTextDownload" download>下载为 .txt</a>
+        </div>
+      </div>
+
+      <div id="pickFileWrap" hidden>
+        <div class="filecard">
+          <svg viewBox="0 0 24 24" width="26" height="26"><path d="M14 3v5h5M6 3h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5a2 2 0 012-2z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/></svg>
+          <div class="filecard-info">
+            <div class="filecard-name" id="pickFileName"></div>
+            <div class="hint" id="pickFileSize"></div>
+          </div>
+        </div>
+        <div class="result-actions">
+          <a class="btn primary" id="pickDownload" download>下载文件</a>
+        </div>
+      </div>
+
+      <button class="btn ghost" id="pickAgainBtn">再取一个</button>
+    </div>
+  </section>
+</main>
+
+<!-- ===================== 管理视图 ===================== -->
+<main class="layout admin" id="adminView" hidden>
+
+  <section class="card narrow" id="adminAuthCard">
+    <div class="card-head"><h2><span class="dot dot-admin"></span><span id="adminAuthTitle">管理登录</span></h2></div>
+
+    <form id="loginForm" class="stack">
+      <label class="field"><span>管理密码</span>
+        <input type="password" id="loginPassword" autocomplete="current-password" placeholder="输入管理密码">
+      </label>
+      <button class="btn primary btn-block" type="submit">登 录</button>
+    </form>
+
+    <form id="setupForm" class="stack" hidden>
+      <p class="hint">首次使用，请设置管理密码（至少 8 位）。密码仅用于管理后台，收发分享不需要它。</p>
+      <label class="field"><span>设置管理密码</span>
+        <input type="password" id="setupPassword" autocomplete="new-password" placeholder="至少 8 位">
+      </label>
+      <label class="field"><span>确认密码</span>
+        <input type="password" id="setupPassword2" autocomplete="new-password" placeholder="再输入一次">
+      </label>
+      <button class="btn primary btn-block" type="submit">完成初始化</button>
+    </form>
+
+    <div class="alert err" id="adminAuthError" hidden></div>
+  </section>
+
+  <section class="card" id="adminPanel" hidden>
+    <div class="card-head">
+      <h2><span class="dot dot-admin"></span>站点管理</h2>
+      <button class="btn ghost" id="logoutBtn">退出登录</button>
+    </div>
+
+    <details open>
+      <summary>站点配置</summary>
+      <form id="configForm" class="config-grid">
+        <label class="field"><span>站点名称</span><input id="cfgName" maxlength="60"></label>
+        <label class="field span2"><span>站点描述</span><input id="cfgDesc" maxlength="200"></label>
+        <label class="field"><span>单文件上限 (MB)</span><input id="cfgMaxUpload" type="number" min="1" step="1"></label>
+        <label class="field"><span>文本上限 (KB)</span><input id="cfgMaxText" type="number" min="1" step="1"></label>
+        <label class="field"><span>分片大小 (MB)</span><input id="cfgChunk" type="number" min="1" step="1"></label>
+        <label class="field"><span>取件码类型</span>
+          <select id="cfgCodeType">
+            <option value="number">5 位数字</option>
+            <option value="secret">5 位大写字母+数字</option>
+          </select>
+        </label>
+        <label class="field"><span>类型白名单（逗号分隔或 *）</span><input id="cfgTypes" placeholder="jpg, png, zip 或 *"></label>
+        <label class="field"><span>有效期上限（天，0=不限）</span><input id="cfgMaxSave" type="number" min="0" step="1"></label>
+        <label class="field"><span>限流次数（每窗口/IP）</span><input id="cfgRateCount" type="number" min="1" step="1"></label>
+        <label class="field"><span>限流窗口（秒）</span><input id="cfgRateWindow" type="number" min="1" step="1"></label>
+        <label class="field"><span>未完成分片保留（小时）</span><input id="cfgChunkExpire" type="number" min="1" step="1"></label>
+        <label class="check span2"><input id="cfgOpenUpload" type="checkbox"><span>开放匿名上传（关闭后仅管理员可发送）</span></label>
+        <div class="span2"><button class="btn primary" type="submit">保存配置</button></div>
+      </form>
+    </details>
+
+    <details open>
+      <summary>分享记录</summary>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>取件码</th><th>类型</th><th>内容/文件名</th><th>大小</th>
+            <th>已取/剩余</th><th>到期时间</th><th></th>
+          </tr></thead>
+          <tbody id="listBody"></tbody>
+        </table>
+      </div>
+      <div class="pager">
+        <button class="btn ghost" id="prevPage">上一页</button>
+        <span class="hint" id="pageInfo"></span>
+        <button class="btn ghost" id="nextPage">下一页</button>
+      </div>
+    </details>
+  </section>
+</main>
+
+<footer class="footer">
+  FileSender <span id="ver"></span> · 收发同页 · 全相对路径 · 反向代理子路径可用
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
