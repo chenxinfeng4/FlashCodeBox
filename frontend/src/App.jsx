@@ -23,7 +23,7 @@ export default function App() {
     try {
       const cfg = await apiFetch('api/config');
       setConfig(cfg);
-      document.title = cfg.name || '文件快递';
+      document.title = cfg.name || '快闪群享';
       return cfg;
     } catch (_) {
       return null;
@@ -47,10 +47,10 @@ export default function App() {
         <a className="brand" href="./">
           <span className="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" width="20" height="20">
-              <path d="M7 9h10M7 13h7M12 17l3-3-3-3" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+              <path d="M13 2L4.5 13h6L9 22l10.5-12h-6L14.5 2z" fill="#fff" />
             </svg>
           </span>
-          <span className="brand-name" id="siteName">{(config && config.name) || '文件快递'}</span>
+          <span className="brand-name" id="siteName">{(config && config.name) || '快闪群享'}</span>
           <span className="brand-sub" id="siteDesc">{(config && config.description) || ''}</span>
         </a>
         <nav className="topbar-nav">

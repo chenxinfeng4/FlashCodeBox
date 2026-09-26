@@ -34,9 +34,9 @@ func Start(ctx context.Context, cfg *config.Manager, st *store.Store, sto storag
 func sweep(cfg *config.Manager, st *store.Store, sto storage.Storage, chunkDir string) {
 	now := models.Now()
 
-	// 1. 过期聊天室：先删全部消息文件，再级联删行。
+	// 1. 过期群：先删全部消息文件，再级联删行。
 	if expired, err := st.ExpiredRooms(context.Background(), now); err != nil {
-		log.Printf("[janitor] 查询过期聊天室失败: %v", err)
+		log.Printf("[janitor] 查询过期群失败: %v", err)
 	} else {
 		for _, r := range expired {
 			msgs, err := st.ListMessages(context.Background(), r.Code, 0, 10000)
@@ -51,19 +51,19 @@ func sweep(cfg *config.Manager, st *store.Store, sto storage.Storage, chunkDir s
 				}
 			}
 			if err := st.DeleteRoomCascade(context.Background(), r.Code); err != nil {
-				log.Printf("[janitor] 级联删除聊天室失败 %s: %v", r.Code, err)
+				log.Printf("[janitor] 级联删除群失败 %s: %v", r.Code, err)
 			} else {
-				log.Printf("[janitor] 已清理过期聊天室 %s（%d 条消息）", r.Code, len(msgs))
+				log.Printf("[janitor] 已清理过期群 %s（%d 条消息）", r.Code, len(msgs))
 			}
 		}
 	}
 
-	// 1.5 空房间（建房后第一条消息没落库的崩溃残留）。
+	// 1.5 空群（建群后第一条消息没落库的崩溃残留）。
 	if codes, err := st.EmptyRooms(context.Background(), now-3600); err != nil {
-		log.Printf("[janitor] 清理空房间失败: %v", err)
+		log.Printf("[janitor] 清理空群失败: %v", err)
 	} else {
 		for _, code := range codes {
-			log.Printf("[janitor] 已清理空房间 %s", code)
+			log.Printf("[janitor] 已清理空群 %s", code)
 		}
 	}
 

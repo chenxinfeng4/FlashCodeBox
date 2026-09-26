@@ -193,7 +193,7 @@ func (a *App) UploadComplete(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 
-	// 会议号/令牌：JSON body（ef）或 multipart 表单均可
+	// 群号/令牌：JSON body（ef）或 multipart 表单均可
 	code := normalizeCode(c.PostForm("code"))
 	if code == "" {
 		code = normalizeCode(ef.Code)
@@ -203,7 +203,7 @@ func (a *App) UploadComplete(c *gin.Context) {
 		token = strings.TrimSpace(ef.Token)
 	}
 
-	// 已有房间：先做权限校验
+	// 已有群：先做权限校验
 	var room *models.Room
 	if code != "" {
 		var okR bool

@@ -13,10 +13,10 @@ const (
 	MaxMessagesPerRoom = 500
 
 	// SenderNameOwner is the display name for the room owner.
-	SenderNameOwner = "楼主"
+	SenderNameOwner = "群主"
 )
 
-// Room is a chat room; its code doubles as the "meeting number".
+// Room is a chat room; its code doubles as the "group number".
 type Room struct {
 	ID         int64  `json:"id"`
 	Code       string `json:"code"`
@@ -34,9 +34,9 @@ type Member struct {
 	ID        int64  `json:"id"`
 	RoomCode  string `json:"room_code"`
 	Role      string `json:"role"`     // owner | guest
-	GuestNo   int64  `json:"guest_no"` // 访客编号（楼主为 0）
+	GuestNo   int64  `json:"guest_no"` // 访客编号（群主为 0）
 	Token     string `json:"-"`
-	Sender    string `json:"sender"` // 展示名：楼主 / 访客N
+	Sender    string `json:"sender"` // 展示名：群主 / 访客N
 	CreatedAt int64  `json:"created_at"`
 }
 
@@ -46,7 +46,7 @@ type Message struct {
 	RoomCode    string `json:"room_code"`
 	MemberID    int64  `json:"member_id"`
 	Role        string `json:"role"`
-	Sender      string `json:"sender"` // 楼主 / 访客N
+	Sender      string `json:"sender"` // 群主 / 访客N
 	Type        string `json:"type"`
 	Text        string `json:"text,omitempty"`
 	StoragePath string `json:"-"`

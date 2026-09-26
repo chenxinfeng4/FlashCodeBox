@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -25,6 +26,53 @@ import (
 	"filesender/internal/store"
 	"filesender/internal/web"
 )
+
+func hasAnyPrefix(s string, prefixes ...string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// lanAddrs returns the machine's non-loopback IPv4 addresses (deduped), so the
+// startup banner can advertise how to reach the server from the local network.
+func lanAddrs() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		// Skip container/bridge virtual interfaces (docker0, br-*, veth*, virbr*):
+		// they are not reachable from other machines on the LAN.
+		if hasAnyPrefix(ifc.Name, "docker", "br-", "veth", "virbr") {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipnet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip4 := ipnet.IP.To4()
+			if ip4 == nil || ip4.IsLoopback() || ip4.IsLinkLocalUnicast() || seen[ip4.String()] {
+				continue
+			}
+			seen[ip4.String()] = true
+			out = append(out, ip4.String())
+		}
+	}
+	return out
+}
 
 func envOr(key, def string) string {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
@@ -115,7 +163,10 @@ func main() {
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 	go func() {
-		log.Printf("FileSender %s 已启动: http://%s  数据目录: %s", api.Version, addr, absData)
+		log.Printf("快闪群享 (FlashShare) %s 已启动: http://%s  数据目录: %s", api.Version, addr, absData)
+		for _, ip := range lanAddrs() {
+			log.Printf("局域网访问: http://%s:%d", ip, *port)
+		}
 		if len(trusted) == 0 {
 			log.Printf("提示：部署在反向代理后请用 -trusted-proxies 指定代理网段，日志与限流才能取到真实客户端 IP")
 		}

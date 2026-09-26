@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { apiFetch, humanBytes, fmtTime } from '../lib/api.js';
 import { getAdminToken, setAdminToken, clearAdminToken } from '../lib/storage.js';
 
-/** 管理后台：初始化/登录、站点配置、聊天室列表 */
+/** 管理后台：初始化/登录、站点配置、群列表 */
 export default function AdminPage({ config, onConfigSaved }) {
   const [initialized, setInitialized] = useState(null); // null = 未知
   const [token, setToken] = useState(getAdminToken());
@@ -96,7 +96,7 @@ export default function AdminPage({ config, onConfigSaved }) {
       return Number.isFinite(n) ? n : def;
     };
     const body = {
-      name: (fd.get('name') || '').trim() || '文件快递',
+      name: (fd.get('name') || '').trim() || '快闪群享',
       description: fd.get('description') || '',
       open_upload: fd.get('open_upload') === 'on',
       max_upload_size: int('max_upload', 1024) * 1048576,
@@ -120,7 +120,7 @@ export default function AdminPage({ config, onConfigSaved }) {
   }
 
   async function deleteRoom(code) {
-    if (!confirm(`确定删除会议 ${code} 吗？全部消息与文件也会被删除。`)) return;
+    if (!confirm(`确定删除群 ${code} 吗？全部消息与文件也会被删除。`)) return;
     try {
       await apiFetch(`api/admin/room/${encodeURIComponent(code)}`, { method: 'DELETE' });
       loadList(page);
@@ -154,7 +154,7 @@ export default function AdminPage({ config, onConfigSaved }) {
             </form>
           ) : (
             <form id="setupForm" className="stack" onSubmit={doSetup}>
-              <p className="hint">首次使用，请设置管理密码（至少 8 位）。密码仅用于管理后台，聊天室不需要它。</p>
+              <p className="hint">首次使用，请设置管理密码（至少 8 位）。密码仅用于管理后台，群聊不需要它。</p>
               <label className="field"><span>设置管理密码</span>
                 <input type="password" id="setupPassword" name="password" autoComplete="new-password" placeholder="至少 8 位" />
               </label>
@@ -188,7 +188,7 @@ export default function AdminPage({ config, onConfigSaved }) {
             <label className="field"><span>单文件上限 (MB)</span><input id="cfgMaxUpload" name="max_upload" type="number" min="1" step="1" defaultValue={cfg ? Math.round(cfg.max_upload_size / 1048576) : 1024} key={'u' + (cfg ? cfg.max_upload_size : '')} /></label>
             <label className="field"><span>文本上限 (KB)</span><input id="cfgMaxText" name="max_text" type="number" min="1" step="1" defaultValue={cfg ? Math.round(cfg.max_text_size / 1024) : 1024} key={'t' + (cfg ? cfg.max_text_size : '')} /></label>
             <label className="field"><span>分片大小 (MB)</span><input id="cfgChunk" name="chunk" type="number" min="1" step="1" defaultValue={cfg ? Math.round(cfg.chunk_size / 1048576) : 5} key={'c' + (cfg ? cfg.chunk_size : '')} /></label>
-            <label className="field"><span>会议号类型</span>
+            <label className="field"><span>群号类型</span>
               <select id="cfgCodeType" name="code_type" defaultValue={cfg ? cfg.code_type : 'number'} key={'k' + (cfg ? cfg.code_type : '')}>
                 <option value="number">5 位数字</option>
                 <option value="secret">5 位大写字母+数字</option>
@@ -205,12 +205,12 @@ export default function AdminPage({ config, onConfigSaved }) {
         </details>
 
         <details open>
-          <summary>聊天室列表</summary>
+          <summary>群列表</summary>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>会议号</th><th>消息</th><th>概要</th><th>文件大小</th><th>成员</th><th>到期时间</th><th />
+                  <th>群号</th><th>消息</th><th>概要</th><th>文件大小</th><th>成员</th><th>到期时间</th><th />
                 </tr>
               </thead>
               <tbody id="listBody">

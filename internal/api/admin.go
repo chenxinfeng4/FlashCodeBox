@@ -201,7 +201,7 @@ func (a *App) AdminPutConfig(c *gin.Context) {
 		return
 	}
 	if req.CodeType != "number" && req.CodeType != "secret" {
-		fail(c, http.StatusBadRequest, "取件码类型只能是 number 或 secret")
+		fail(c, http.StatusBadRequest, "群号类型只能是 number 或 secret")
 		return
 	}
 	types := make([]string, 0, len(req.AllowedTypes))
@@ -343,7 +343,7 @@ func (a *App) AdminDelete(c *gin.Context) {
 		fail(c, http.StatusNotFound, "记录不存在")
 		return
 	}
-	// 先删文件，再级联删消息、成员和房间
+	// 先删文件，再级联删消息、成员和群
 	msgs, err := a.Store.ListMessages(c.Request.Context(), code, 0, models.MaxMessagesPerRoom+1)
 	if err == nil {
 		for _, m := range msgs {

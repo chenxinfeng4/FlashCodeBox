@@ -125,7 +125,7 @@ export default function ChatPage({ config }) {
       } catch (e) {
         if ([403, 404, 410].includes(e.status)) {
           leaveRoom();
-          showError('聊天室已失效：' + e.message);
+          showError('群聊已失效：' + e.message);
         }
         // 其他错误静默，下轮重试
       }
@@ -241,7 +241,7 @@ export default function ChatPage({ config }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
 
-  // 建房有效期：控件已移除，固定默认 1 天（楼主可在设置弹层修改）
+  // 建群有效期：控件已移除，固定默认 1 天（群主可在设置弹层修改）
   function readExpire() {
     return { value: 1, style: 'day' };
   }
@@ -311,14 +311,14 @@ export default function ChatPage({ config }) {
   const locked = joined && role === 'guest' && !allowReply;
 
   return (
-    <section className="card chat" id="chatPanel" aria-label="聊天室">
+    <section className="card chat" id="chatPanel" aria-label="群聊">
       <div className="chat-head">
         <div className="chat-head-spacer" />
         <div className="chat-code-area" id="codeArea" hidden={!joined}>
-          <span className="chat-code-label">会议号</span>
+          <span className="chat-code-label">群号</span>
           <span className="chat-code" id="roomCode">{code || '—'}</span>
           <button
-            className="iconbtn" id="copyCodeBtn" type="button" title="复制会议号" aria-label="复制会议号"
+            className="iconbtn" id="copyCodeBtn" type="button" title="复制群号" aria-label="复制群号"
             onClick={async (e) => {
               await navigator.clipboard.writeText(code || '').catch(() => {});
               e.currentTarget.textContent = '✓';
@@ -340,27 +340,27 @@ export default function ChatPage({ config }) {
           </button>
         </div>
         <span className="hint" id="memberHint" hidden={!joined}>
-          我：{role === 'owner' ? '楼主' : (sender || '访客')}
+          我：{role === 'owner' ? '群主' : (sender || '访客')}
         </span>
         <button
-          className="iconbtn" id="settingsBtn" type="button" title="聊天室设置" aria-label="聊天室设置"
+          className="iconbtn" id="settingsBtn" type="button" title="群设置" aria-label="群设置"
           hidden={!(joined && role === 'owner')}
           onClick={() => setSettingsOpen(true)}
         >
           <svg viewBox="0 0 24 24" width="17" height="17"><circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" fill="none" /><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34h0a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55h0a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87v0a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
-        <button className="iconbtn" id="leaveBtn" type="button" title="退出会议" aria-label="退出会议" hidden={!joined} onClick={leaveRoom}>
+        <button className="iconbtn" id="leaveBtn" type="button" title="退出群聊" aria-label="退出群聊" hidden={!joined} onClick={leaveRoom}>
           <svg viewBox="0 0 24 24" width="17" height="17"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
       </div>
 
       <div className="join-panel" id="joinPanel" hidden={joined}>
-        <div className="join-title">加入聊天室</div>
+        <div className="join-title">加入群聊</div>
         <div className="join-form">
           <input
             id="joinCode"
             className="code-input"
-            placeholder="会议号"
+            placeholder="群号"
             maxLength="5"
             autoComplete="off"
             spellCheck="false"
@@ -373,7 +373,7 @@ export default function ChatPage({ config }) {
             加 入
           </button>
         </div>
-        <div className="hint">没有会议号？在下方输入框发送第一条消息即可创建新会议</div>
+        <div className="hint">没有群号？在下方输入框发送第一条消息即可建群</div>
       </div>
 
       <div className="chat-flow" id="chatFlow" ref={flowRef}>
@@ -446,7 +446,7 @@ export default function ChatPage({ config }) {
           id="sendText"
           ref={textRef}
           rows="1"
-          placeholder={locked ? '楼主已关闭访客回消息' : '输入消息…'}
+          placeholder={locked ? '群主已关闭访客回消息' : '输入消息…'}
           disabled={locked}
           value={text}
           onChange={(e) => {

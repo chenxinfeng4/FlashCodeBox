@@ -10,7 +10,7 @@ func RegisterRoutes(r *gin.Engine, a *App) {
 
 	api.GET("config", a.PublicConfig)
 
-	// 聊天室。
+	// 群聊。
 	// 限流只挂写操作：轮询拉取与文件下载是正常高频读，不能计数，
 	// 否则访客一进入（join + 全量拉取 + 2.5s 轮询）就会撞上限流。
 	room := api.Group("room")
@@ -23,7 +23,7 @@ func RegisterRoutes(r *gin.Engine, a *App) {
 	room.GET(":code/settings", a.RoomSettings)
 	room.PUT(":code/settings", a.uploadRateLimit(), a.RoomSettings)
 
-	// 分片上传（complete 落入房间）。
+	// 分片上传（complete 落入群）。
 	// 注意：分片 PUT 不做请求次数限流——大文件动辄上百个分片，
 	// 按请求数限流会误伤正常上传（429）；滥用防护由会话校验与过期清理承担。
 	up := api.Group("upload")

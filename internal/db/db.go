@@ -6,11 +6,13 @@ import (
 	"os"
 	"path/filepath"
 
+	"filesender/internal/models"
+
 	_ "modernc.org/sqlite"
 )
 
 const schema = `
--- 聊天室（会议号即原取件码）
+-- 群（群号即原取件码）
 CREATE TABLE IF NOT EXISTS rooms (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
 	code        TEXT    NOT NULL UNIQUE,
@@ -20,12 +22,12 @@ CREATE TABLE IF NOT EXISTS rooms (
 );
 CREATE INDEX IF NOT EXISTS idx_rooms_expire_at ON rooms(expire_at);
 
--- 成员：楼主与访客各持随机令牌
+-- 成员：群主与访客各持随机令牌
 CREATE TABLE IF NOT EXISTS members (
 	id         INTEGER PRIMARY KEY AUTOINCREMENT,
 	room_code  TEXT    NOT NULL,
 	role       TEXT    NOT NULL,               -- 'owner' | 'guest'
-	guest_no   INTEGER NOT NULL DEFAULT 0,     -- 访客编号（楼主为 0）
+	guest_no   INTEGER NOT NULL DEFAULT 0,     -- 访客编号（群主为 0）
 	token      TEXT    NOT NULL,
 	created_at INTEGER NOT NULL
 );
@@ -38,7 +40,7 @@ CREATE TABLE IF NOT EXISTS messages (
 	room_code   TEXT    NOT NULL,
 	member_id   INTEGER NOT NULL,
 	role        TEXT    NOT NULL,               -- 'owner' | 'guest'
-	sender      TEXT    NOT NULL,               -- '楼主' | '访客N'
+	sender      TEXT    NOT NULL,               -- '群主' | '访客N'
 	type        TEXT    NOT NULL,               -- 'text' | 'file'
 	text        TEXT    NOT NULL DEFAULT '',
 	storage_path TEXT   NOT NULL DEFAULT '',
@@ -103,7 +105,24 @@ func Open(dataDir string) (*sql.DB, error) {
 		gdb.Close()
 		return nil, fmt.Errorf("迁移旧数据失败: %w", err)
 	}
+	if err := migrateOwnerName(gdb); err != nil {
+		gdb.Close()
+		return nil, fmt.Errorf("迁移旧数据失败: %w", err)
+	}
 	return gdb, nil
+}
+
+// migrateOwnerName renames the historic owner display name (楼主 → 群主) in
+// existing messages. Idempotent: a no-op once no old rows remain.
+func migrateOwnerName(gdb *sql.DB) error {
+	res, err := gdb.Exec(`UPDATE messages SET sender = ? WHERE sender = ?`, models.SenderNameOwner, "楼主")
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		fmt.Printf("已将 %d 条旧消息的发送者显示名更新为「%s」\n", n, models.SenderNameOwner)
+	}
+	return nil
 }
 
 // migrateLegacy upgrades pre-0.2 databases:
@@ -143,7 +162,7 @@ func migrateLegacy(gdb *sql.DB) error {
 		// v0.0：payload 直接在 file_codes 上
 		if _, err := tx.Exec(`INSERT INTO messages
 			(room_code, member_id, role, sender, type, text, storage_path, filename, size, file_hash, created_at)
-			SELECT code, 0, 'owner', '楼主', type, text, storage_path, filename, size, file_hash, created_at
+			SELECT code, 0, 'owner', '群主', type, text, storage_path, filename, size, file_hash, created_at
 			  FROM file_codes WHERE type IN ('text','file')`); err != nil {
 			return err
 		}
@@ -151,7 +170,7 @@ func migrateLegacy(gdb *sql.DB) error {
 		// v0.1：file_codes + share_items
 		if _, err := tx.Exec(`INSERT INTO messages
 			(room_code, member_id, role, sender, type, text, storage_path, filename, size, file_hash, created_at)
-			SELECT share_code, 0, 'owner', '楼主', type, text, storage_path, filename, size, file_hash, created_at
+			SELECT share_code, 0, 'owner', '群主', type, text, storage_path, filename, size, file_hash, created_at
 			  FROM share_items`); err != nil {
 			return err
 		}
@@ -170,7 +189,7 @@ func migrateLegacy(gdb *sql.DB) error {
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	fmt.Println("已将旧版分享数据迁移为聊天室结构（历史分享为只读，无楼主令牌）")
+	fmt.Println("已将旧版分享数据迁移为群结构（历史分享为只读，无群主令牌）")
 	return nil
 }
 

@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
 
-/** 楼主设置弹层：访客回消息开关 + 消息保留时长（常挂载，hidden 控制显隐） */
+/** 群主设置弹层：访客回消息开关 + 消息保留时长（常挂载，hidden 控制显隐） */
 export default function SettingsModal({ open, room, onSave, onClose }) {
   const [allowReply, setAllowReply] = useState(!!room.allow_reply);
   const [style, setStyle] = useState('day');
   const [value, setValue] = useState(1);
 
-  // 每次打开时，按房间当前值重置表单
+  // 每次打开时，按群当前值重置表单
   useEffect(() => {
     if (!open) return;
     setAllowReply(!!room.allow_reply);
@@ -29,7 +29,7 @@ export default function SettingsModal({ open, room, onSave, onClose }) {
     <div className="modal" id="settingsModal" hidden={!open} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal-card">
         <div className="modal-head">
-          <h3>聊天室设置</h3>
+          <h3>群设置</h3>
           <button className="iconbtn" id="setCloseBtn" type="button" title="关闭" aria-label="关闭" onClick={onClose}>✕</button>
         </div>
         <label className="check">
@@ -70,7 +70,7 @@ export default function SettingsModal({ open, room, onSave, onClose }) {
         <p className="hint" id="setExpireHint">
           {style === 'forever'
             ? '消息将永久保留（可再修改）'
-            : '保存后，聊天室及其全部消息将在该时长后自动删除'}
+            : '保存后，该群及其全部消息将在该时长后自动删除'}
         </p>
         <button
           className="btn primary btn-block"

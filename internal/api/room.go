@@ -17,7 +17,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// 房间/成员辅助
+// 群/成员辅助
 
 func roomView(r *models.Room) gin.H {
 	return gin.H{
@@ -55,7 +55,7 @@ func messageView(m *models.Message) gin.H {
 func (a *App) loadRoom(c *gin.Context, code string) (*models.Room, bool) {
 	room, err := a.Store.GetRoom(c.Request.Context(), code)
 	if errors.Is(err, store.ErrNotFound) {
-		fail(c, http.StatusNotFound, "会议号不存在或已过期")
+		fail(c, http.StatusNotFound, "群号不存在或已过期")
 		return nil, false
 	}
 	if err != nil {
@@ -64,7 +64,7 @@ func (a *App) loadRoom(c *gin.Context, code string) (*models.Room, bool) {
 	}
 	if room.IsExpired(models.Now()) {
 		a.removeRoom(c.Request.Context(), room)
-		fail(c, http.StatusGone, "聊天室已过期")
+		fail(c, http.StatusGone, "群已解散")
 		return nil, false
 	}
 	return room, true
@@ -95,14 +95,14 @@ func (a *App) authMemberByToken(ctx context.Context, room *models.Room, token st
 	return m
 }
 
-// checkReplyPermission: 非楼主必须携带有效令牌且回复开关打开。
+// checkReplyPermission: 非群主必须携带有效令牌且回复开关打开。
 func (a *App) checkReplyPermission(ctx context.Context, room *models.Room, token string) (*models.Member, int, error) {
 	m := a.authMemberByToken(ctx, room, token)
 	if m == nil {
 		return nil, http.StatusForbidden, errors.New("无效的成员令牌，请重新加入")
 	}
 	if !room.AllowReply && m.Role != models.RoleOwner {
-		return nil, http.StatusForbidden, errors.New("楼主已关闭访客回消息")
+		return nil, http.StatusForbidden, errors.New("群主已关闭访客回消息")
 	}
 	return m, 0, nil
 }
@@ -145,7 +145,7 @@ func (a *App) createRoomWithOwner(ctx context.Context, ef expireFields) (*models
 		}
 		return room, member, nil
 	}
-	return nil, nil, errors.New("会议号生成失败，请重试")
+	return nil, nil, errors.New("群号生成失败，请重试")
 }
 
 // insertRoomMessage: 消息条数上限校验 + 落库。
@@ -158,7 +158,7 @@ func (a *App) insertRoomMessage(ctx context.Context, room *models.Room, member *
 	}
 	if n >= models.MaxMessagesPerRoom {
 		return nil, http.StatusBadRequest,
-			fmt.Errorf("聊天室消息已达上限（%d 条）", models.MaxMessagesPerRoom)
+			fmt.Errorf("群消息已达上限（%d 条）", models.MaxMessagesPerRoom)
 	}
 	msg := build()
 	msg.RoomCode = room.Code
@@ -172,7 +172,7 @@ func (a *App) insertRoomMessage(ctx context.Context, room *models.Room, member *
 	return msg, 0, nil
 }
 
-// appendMessage: room == nil 时创建房间（发送者成为楼主），否则校验成员身份。
+// appendMessage: room == nil 时创建群（发送者成为群主），否则校验成员身份。
 // 返回的 member 在创建路径上直接复用，避免二次查库。
 func (a *App) appendMessage(ctx context.Context, room *models.Room, ef expireFields, token string,
 	build func() *models.Message) (*models.Room, *models.Member, *models.Message, int, error) {
@@ -203,7 +203,7 @@ func (a *App) appendMessage(ctx context.Context, room *models.Room, ef expireFie
 }
 
 // ---------------------------------------------------------------------------
-// 房间创建 / 加入
+// 群创建 / 加入
 
 type expireFields struct {
 	Code        string `json:"code" form:"code"`
@@ -212,7 +212,7 @@ type expireFields struct {
 	ExpireStyle string `json:"expire_style" form:"expire_style"`
 }
 
-// RoomCreate: 楼主发出第一条文字消息时创建房间（文件走 RoomSendFile）。
+// RoomCreate: 群主发出第一条文字消息时建群（文件走 RoomSendFile）。
 func (a *App) RoomCreate(c *gin.Context) {
 	if !requireOpenUpload(c, a) {
 		return
@@ -258,7 +258,7 @@ func (a *App) RoomCreate(c *gin.Context) {
 	})
 }
 
-// JoinRoom: 凭会议号加入。带有效 token → 返回既有身份；否则分配新访客编号。
+// JoinRoom: 凭群号加入。带有效 token → 返回既有身份；否则分配新访客编号。
 func (a *App) JoinRoom(c *gin.Context) {
 	code := normalizeCode(c.Param("code"))
 	if code == "" {
@@ -269,7 +269,7 @@ func (a *App) JoinRoom(c *gin.Context) {
 		code = normalizeCode(req.Code)
 	}
 	if code == "" {
-		fail(c, http.StatusBadRequest, "缺少会议号")
+		fail(c, http.StatusBadRequest, "缺少群号")
 		return
 	}
 	room, okR := a.loadRoom(c, code)
@@ -308,7 +308,7 @@ func (a *App) JoinRoom(c *gin.Context) {
 // ---------------------------------------------------------------------------
 // 消息（轮询）
 
-// RoomMessages: 全量（after=0）或增量拉取，返回房间状态与自身身份。
+// RoomMessages: 全量（after=0）或增量拉取，返回群状态与自身身份。
 func (a *App) RoomMessages(c *gin.Context) {
 	code := normalizeCode(c.Param("code"))
 	room, okR := a.loadRoom(c, code)
@@ -317,7 +317,7 @@ func (a *App) RoomMessages(c *gin.Context) {
 	}
 	member := a.authMember(c, room)
 	if member == nil {
-		fail(c, http.StatusForbidden, "请先加入聊天室")
+		fail(c, http.StatusForbidden, "请先加入群聊")
 		return
 	}
 	var after int64
@@ -356,7 +356,7 @@ type sendTextReq struct {
 	Text  string `json:"text" binding:"required"`
 }
 
-// RoomSendText: 发文字。URL 的 :code 为空 → 创建房间成为楼主。
+// RoomSendText: 发文字。URL 的 :code 为空 → 建群成为群主。
 func (a *App) RoomSendText(c *gin.Context) {
 	if !requireOpenUpload(c, a) {
 		return
@@ -378,7 +378,7 @@ func (a *App) RoomSendText(c *gin.Context) {
 		return
 	}
 
-	// 会议号优先取 URL 参数，其次 body（兼容）
+	// 群号优先取 URL 参数，其次 body（兼容）
 	code := normalizeCode(c.Param("code"))
 	if code == "" {
 		code = normalizeCode(req.Code)
@@ -414,7 +414,7 @@ type pendingFile struct {
 	hash       string
 }
 
-// RoomSendFile: 文件直传（multipart；code+token 追加，否则建房成为楼主）。
+// RoomSendFile: 文件直传（multipart；code+token 追加，否则建群成为群主）。
 func (a *App) RoomSendFile(c *gin.Context) {
 	if !requireOpenUpload(c, a) {
 		return
@@ -495,7 +495,7 @@ func (a *App) RoomSendFile(c *gin.Context) {
 		return
 	}
 
-	// 已有房间：先做一次权限校验（避免多文件重复报错路径不一致）
+	// 已有群：先做一次权限校验（避免多文件重复报错路径不一致）
 	var room *models.Room
 	if code != "" {
 		var okR bool
@@ -557,7 +557,7 @@ func (a *App) RoomSendFile(c *gin.Context) {
 	})
 }
 
-// RoomMessageFile: 房间内消息文件的下载/内联。
+// RoomMessageFile: 群内消息文件的下载/内联。
 func (a *App) RoomMessageFile(c *gin.Context) {
 	code := normalizeCode(c.Param("code"))
 	room, okR := a.loadRoom(c, code)
@@ -565,7 +565,7 @@ func (a *App) RoomMessageFile(c *gin.Context) {
 		return
 	}
 	if a.authMember(c, room) == nil {
-		fail(c, http.StatusForbidden, "请先加入聊天室")
+		fail(c, http.StatusForbidden, "请先加入群聊")
 		return
 	}
 	var msgID int64
@@ -611,7 +611,7 @@ func (a *App) RoomMessageFile(c *gin.Context) {
 }
 
 // ---------------------------------------------------------------------------
-// 楼主设置：访客回消息开关、房间过期时间
+// 群主设置：访客回消息开关、群过期时间
 
 func (a *App) RoomSettings(c *gin.Context) {
 	code := normalizeCode(c.Param("code"))
@@ -621,7 +621,7 @@ func (a *App) RoomSettings(c *gin.Context) {
 	}
 	member := a.authMember(c, room)
 	if member == nil || member.Role != models.RoleOwner {
-		fail(c, http.StatusForbidden, "仅楼主可修改设置")
+		fail(c, http.StatusForbidden, "仅群主可修改设置")
 		return
 	}
 	if c.Request.Method == http.MethodGet {

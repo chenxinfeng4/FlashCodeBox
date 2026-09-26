@@ -449,7 +449,7 @@ func RandomCode(codeType string) (string, error) {
 		}
 		return fmt.Sprintf("%05d", n.Int64()+10000), nil
 	default:
-		return "", fmt.Errorf("未知会议号类型: %s", codeType)
+		return "", fmt.Errorf("未知群号类型: %s", codeType)
 	}
 }
 

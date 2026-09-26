@@ -6,7 +6,7 @@ import { getUploadId, setUploadId, clearUploadId } from './storage.js';
  *   - init/resume（sessionStorage 断点）
  *   - 并发 3 个 XHR 分片（upload.onprogress 字节级进度）
  *   - 失败退避重试，EMA 平滑网速
- *   - complete({code?, token?, expire_*}) → 落入房间（或建房）
+ *   - complete({code?, token?, expire_*}) → 落入群（或建群）
  *
  * @param {File} file
  * @param {object} opts { expire: {value, style}, code, token, onProgress(pct, speed) }
@@ -144,7 +144,7 @@ export async function uploadFile(file, opts) {
   if (failure) throw failure;
   if (onProgress) onProgress(100, speed);
 
-  // 3) 合并进聊天室
+  // 3) 合并进群
   const body = {};
   if (code) {
     body.code = code;
