@@ -11,7 +11,7 @@ ARG GOPROXY=https://goproxy.cn|https://proxy.golang.org|direct
 # ---------------------------------------------------------------------------
 # Stage 1 — 构建前端（与目标架构无关，固定用构建机架构，避免 QEMU 跑 Node）
 # ---------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend
+FROM --platform=$BUILDPLATFORM node:24-alpine AS frontend
 ARG NPM_REGISTRY
 WORKDIR /src/frontend
 # 先装依赖，最大化利用层缓存

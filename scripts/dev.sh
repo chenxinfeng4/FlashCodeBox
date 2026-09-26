@@ -5,7 +5,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-command -v node >/dev/null 2>&1 || { echo "✗ 需要 Node.js 20+" >&2; exit 1; }
+command -v node >/dev/null 2>&1 || { echo "✗ 需要 Node.js 24+" >&2; exit 1; }
+node_major=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)
+[ "$node_major" -ge 24 ] || { echo "✗ Node.js 版本过低（$(node -v 2>/dev/null || echo 未知)），需要 24+" >&2; exit 1; }
 command -v go   >/dev/null 2>&1 || { echo "✗ 需要 Go 1.27+"   >&2; exit 1; }
 
 cleanup() { [ -n "${GO_PID:-}" ] && kill "$GO_PID" 2>/dev/null || true; }

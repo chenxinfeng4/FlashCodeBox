@@ -65,15 +65,19 @@ Then open `http://localhost:12345`.
 
 ### Local binary (no Docker)
 
-No toolchain needed: download the prebuilt binary straight from [Releases](https://github.com/chenxinfeng4/FlashCodeBox/releases/latest) (`flashcodebox-linux-amd64` / `flashcodebox-linux-arm64`; the tar.gz archives also bundle docs):
+No toolchain needed: download the prebuilt binary straight from [Releases](https://github.com/chenxinfeng4/FlashCodeBox/releases/latest) — covers **Linux** (amd64/arm64), **macOS** (Apple Silicon) and **Windows** (x86_64); archives also bundle docs:
 
 ```bash
+# Linux amd64; swap the filename for your platform:
+#   flashcodebox-linux-arm64 / flashcodebox-darwin-arm64 / flashcodebox-windows-amd64.exe
 wget https://github.com/chenxinfeng4/FlashCodeBox/releases/latest/download/flashcodebox-linux-amd64 -O flashcodebox
 chmod +x flashcodebox
 ./flashcodebox -port 12345 -data ./data
 ```
 
-Or build it yourself (requires Go 1.27+ and Node 20+):
+> On macOS, if Gatekeeper blocks a browser-downloaded binary: `xattr -d com.apple.quarantine flashcodebox-darwin-arm64`
+
+Or build it yourself (requires Go 1.27+ and Node 24+):
 
 ```bash
 bash scripts/build.sh          # Vite build → Go embed → build/flashcodebox

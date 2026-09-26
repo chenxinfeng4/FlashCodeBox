@@ -10,7 +10,7 @@ help: ## 显示帮助
 build: ## 本地构建（前端 + Go）→ build/flashcodebox
 	bash scripts/build.sh
 
-release: ## 发布打包（linux amd64+arm64 tar.gz）→ release/
+release: ## 发布打包（linux/darwin/windows 二进制+压缩包）→ release/
 	bash scripts/release.sh
 
 run: build ## 本地构建并运行

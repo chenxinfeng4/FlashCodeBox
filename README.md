@@ -10,7 +10,7 @@
 
 [![License](https://img.shields.io/badge/License-MIT-3da639?style=flat-square)](./LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.27-00ADD8?style=flat-square&logo=go&logoColor=white)](./go.mod)
-[![Node](https://img.shields.io/badge/Node-20-5FA04E?style=flat-square&logo=nodedotjs&logoColor=white)](./frontend/package.json)
+[![Node](https://img.shields.io/badge/Node-24-5FA04E?style=flat-square&logo=nodedotjs&logoColor=white)](./frontend/package.json)
 [![Docker](https://img.shields.io/badge/Docker-多架构-2496ED?style=flat-square&logo=docker&logoColor=white)](#docker-部署)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-111111?style=flat-square)](#参与贡献)
 
@@ -63,15 +63,19 @@ docker run -d --restart unless-stopped \
 
 ### 方式 B：本地二进制（无需 Docker）
 
-无需编译环境：从 [Releases](https://github.com/chenxinfeng4/FlashCodeBox/releases/latest) 直接下载编译好的二进制（`flashcodebox-linux-amd64` / `flashcodebox-linux-arm64`，tar.gz 包内另附说明文档）：
+无需编译环境：从 [Releases](https://github.com/chenxinfeng4/FlashCodeBox/releases/latest) 直接下载编译好的二进制，覆盖 **Linux**（amd64/arm64）、**macOS**（Apple Silicon）、**Windows**（x86_64）；tar.gz/zip 包内另附说明文档：
 
 ```bash
+# Linux amd64；按平台替换文件名：
+#   flashcodebox-linux-arm64 / flashcodebox-darwin-arm64 / flashcodebox-windows-amd64.exe
 wget https://github.com/chenxinfeng4/FlashCodeBox/releases/latest/download/flashcodebox-linux-amd64 -O flashcodebox
 chmod +x flashcodebox
 ./flashcodebox -port 12345 -data ./data
 ```
 
-也可以自行构建（需要 Go 1.27+ 与 Node 20+）：
+> macOS 若浏览器下载后运行被 Gatekeeper 拦截：`xattr -d com.apple.quarantine flashcodebox-darwin-arm64`
+
+也可以自行构建（需要 Go 1.27+ 与 Node 24+）：
 
 ```bash
 bash scripts/build.sh          # 前端 Vite → Go embed → build/flashcodebox
