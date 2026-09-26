@@ -169,6 +169,8 @@ func (a *App) insertRoomMessage(ctx context.Context, room *models.Room, member *
 	if err := a.Store.InsertMessage(ctx, msg); err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
+	// 实时推送给群内所有 SSE 订阅者（无订阅者时为空操作）
+	a.sse.publish(room.Code, "message", messageView(msg))
 	return msg, 0, nil
 }
 
@@ -302,6 +304,8 @@ func (a *App) JoinRoom(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// 通知在线成员人数变化
+	a.sse.publish(code, "members", gin.H{"count": a.memberCount(c.Request.Context(), code)})
 	ok(c, gin.H{"room": roomView(room), "token": newToken, "member": memberView(member)})
 }
 
@@ -334,13 +338,12 @@ func (a *App) RoomMessages(c *gin.Context) {
 	ok(c, gin.H{
 		"room":     roomView(room),
 		"you":      memberView(member),
-		"members":  a.memberCount(code),
 		"messages": out,
 	})
 }
 
-func (a *App) memberCount(code string) int {
-	n, err := a.Store.CountMembers(context.Background(), code)
+func (a *App) memberCount(ctx context.Context, code string) int {
+	n, err := a.Store.CountMembers(ctx, code)
 	if err != nil {
 		return 0
 	}
@@ -610,6 +613,26 @@ func (a *App) RoomMessageFile(c *gin.Context) {
 	http.ServeContent(c.Writer, c.Request, msg.Filename, modTime, f)
 }
 
+// RoomDissolve: 群主解散群——删除全部消息与文件，所有在线成员立即被踢出。
+func (a *App) RoomDissolve(c *gin.Context) {
+	code := normalizeCode(c.Param("code"))
+	room, okR := a.loadRoom(c, code)
+	if !okR {
+		return
+	}
+	member := a.authMember(c, room)
+	if member == nil {
+		fail(c, http.StatusForbidden, "请先加入群聊")
+		return
+	}
+	if member.Role != models.RoleOwner {
+		fail(c, http.StatusForbidden, "仅群主可解散群聊")
+		return
+	}
+	a.removeRoom(c.Request.Context(), room)
+	ok(c, gin.H{"dissolved": code})
+}
+
 // ---------------------------------------------------------------------------
 // 群主设置：访客回消息开关、群过期时间
 
@@ -672,11 +695,14 @@ func (a *App) RoomSettings(c *gin.Context) {
 		fail(c, http.StatusInternalServerError, err.Error())
 		return
 	}
+	a.sse.publish(code, "room", roomView(updated))
 	ok(c, roomView(updated))
 }
 
-// removeRoom deletes the room, members, messages and all file payloads.
+// removeRoom deletes the room, members, messages and all file payloads,
+// then tells any connected SSE clients the room is gone.
 func (a *App) removeRoom(ctx context.Context, room *models.Room) {
+	a.sse.publish(room.Code, "gone", gin.H{"code": room.Code})
 	msgs, err := a.Store.ListMessages(ctx, room.Code, 0, models.MaxMessagesPerRoom+1)
 	if err == nil {
 		for _, m := range msgs {

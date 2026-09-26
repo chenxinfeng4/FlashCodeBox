@@ -23,6 +23,7 @@ type App struct {
 	Storage  storage.Storage
 	ChunkDir string
 
+	sse      *sseHub
 	upLim    *limiter
 	loginLim *limiter
 }
@@ -33,6 +34,7 @@ func NewApp(cfg *config.Manager, st *store.Store, sto storage.Storage, chunkDir 
 		Store:    st,
 		Storage:  sto,
 		ChunkDir: chunkDir,
+		sse:      newSSEHub(),
 		upLim:    newLimiter(),
 		loginLim: newLimiter(),
 	}

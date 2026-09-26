@@ -154,7 +154,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	janitor.Start(ctx, cfgMgr, app.Store, sto, chunkDir)
+	janitor.Start(ctx, cfgMgr, app.Store, sto, chunkDir, app.NotifyRoomGone)
 
 	addr := fmt.Sprintf(":%d", *port)
 	srv := &http.Server{

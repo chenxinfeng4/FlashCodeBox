@@ -178,7 +178,7 @@ server {
 ## 技术栈
 
 - **后端**：Go 1.27 · Gin · `modernc.org/sqlite`（纯 Go，无 CGO）
-- **前端**：Vite 7 · React 19 · 手写 CSS（明暗主题 CSS 变量），产物由 `go:embed` 打进二进制
+- **前端**：Vite 7 · React 19 · TypeScript（strict）· 手写 CSS（明暗主题 CSS 变量），产物由 `go:embed` 打进二进制
 - **存储**：所有状态在 `-data` 目录 —— `flashcodebox.db`（群/成员/消息/配置）、`share/`（文件）、`chunks/`（未完成分片）；停机整目录拷贝即备份
 - **鉴权**：群成员随机令牌（header / query 双通道）；管理端 Bearer 令牌
 

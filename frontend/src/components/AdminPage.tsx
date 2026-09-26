@@ -1,14 +1,20 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { apiFetch, humanBytes, fmtTime } from '../lib/api.js';
-import { getAdminToken, setAdminToken, clearAdminToken } from '../lib/storage.js';
+import { apiFetch, humanBytes, fmtTime, errMsg } from '../lib/api';
+import { getAdminToken, setAdminToken, clearAdminToken } from '../lib/storage';
+import type { AdminConfig, AdminList, SiteConfig } from '../types';
+
+interface AdminPageProps {
+  config: SiteConfig | null;
+  onConfigSaved?: () => unknown;
+}
 
 /** 管理后台：初始化/登录、站点配置、群列表 */
-export default function AdminPage({ config, onConfigSaved }) {
-  const [initialized, setInitialized] = useState(null); // null = 未知
-  const [token, setToken] = useState(getAdminToken());
+export default function AdminPage({ onConfigSaved }: AdminPageProps) {
+  const [initialized, setInitialized] = useState<boolean | null>(null); // null = 未知
+  const [token, setToken] = useState<string | null>(getAdminToken());
   const [authError, setAuthError] = useState('');
-  const [roomList, setRoomList] = useState({ items: [], total: 0, page: 1, page_size: 20 });
-  const [cfg, setCfg] = useState(null);
+  const [roomList, setRoomList] = useState<AdminList>({ items: [], total: 0, page: 1, page_size: 20 });
+  const [cfg, setCfg] = useState<AdminConfig | null>(null);
   const [page, setPage] = useState(1);
 
   const authed = !!token;
@@ -17,27 +23,27 @@ export default function AdminPage({ config, onConfigSaved }) {
   useEffect(() => {
     (async () => {
       try {
-        const st = await apiFetch('api/admin/status');
+        const st = await apiFetch<{ initialized: boolean }>('api/admin/status');
         setInitialized(!!st.initialized);
       } catch (e) {
-        setAuthError('无法连接服务器：' + e.message);
+        setAuthError('无法连接服务器：' + errMsg(e));
         setInitialized(false);
       }
     })();
   }, []);
 
   const loadAdminConfig = useCallback(async () => {
-    const c = await apiFetch('api/admin/config');
+    const c = await apiFetch<AdminConfig>('api/admin/config');
     setCfg(c);
   }, []);
 
-  const loadList = useCallback(async (p) => {
+  const loadList = useCallback(async (p: number) => {
     try {
-      const data = await apiFetch(`api/admin/list?page=${p}&page_size=20`);
+      const data = await apiFetch<AdminList>(`api/admin/list?page=${p}&page_size=20`);
       setRoomList(data);
       setPage(data.page || p);
     } catch (e) {
-      alert('加载列表失败：' + e.message);
+      alert('加载列表失败：' + errMsg(e));
     }
   }, []);
 
@@ -47,25 +53,26 @@ export default function AdminPage({ config, onConfigSaved }) {
     loadAdminConfig().catch((e) => {
       clearAdminToken();
       setToken(null);
-      if (e.status !== 401) setAuthError(e.message);
+      const status = (e as { status?: number }).status;
+      if (status !== 401) setAuthError(errMsg(e));
     });
     loadList(1);
   }, [authed, initialized, loadAdminConfig, loadList]);
 
-  async function doLogin(e) {
+  async function doLogin(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setAuthError('');
     try {
       const pw = new FormData(e.currentTarget).get('password');
-      const data = await apiFetch('api/admin/login', { json: { password: pw } });
+      const data = await apiFetch<{ token: string }>('api/admin/login', { json: { password: pw } });
       setAdminToken(data.token);
       setToken(data.token);
     } catch (err) {
-      setAuthError(err.message);
+      setAuthError(errMsg(err));
     }
   }
 
-  async function doSetup(e) {
+  async function doSetup(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setAuthError('');
     const fd = new FormData(e.currentTarget);
@@ -79,31 +86,31 @@ export default function AdminPage({ config, onConfigSaved }) {
       return;
     }
     try {
-      const data = await apiFetch('api/admin/setup', { json: { password: pw } });
+      const data = await apiFetch<{ token: string }>('api/admin/setup', { json: { password: pw } });
       setAdminToken(data.token);
       setToken(data.token);
       if (onConfigSaved) await onConfigSaved();
     } catch (err) {
-      setAuthError(err.message);
+      setAuthError(errMsg(err));
     }
   }
 
-  async function saveConfig(e) {
+  async function saveConfig(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    const int = (k, def) => {
-      const n = parseInt(fd.get(k), 10);
+    const int = (k: string, def: number): number => {
+      const n = parseInt(String(fd.get(k)), 10);
       return Number.isFinite(n) ? n : def;
     };
     const body = {
-      name: (fd.get('name') || '').trim() || '快闪群传',
-      description: fd.get('description') || '',
+      name: (String(fd.get('name') || '')).trim() || '快闪群传',
+      description: String(fd.get('description') || ''),
       open_upload: fd.get('open_upload') === 'on',
       max_upload_size: int('max_upload', 1024) * 1048576,
       max_text_size: int('max_text', 1024) * 1024,
       chunk_size: int('chunk', 5) * 1048576,
-      code_type: fd.get('code_type'),
-      allowed_types: (fd.get('types') || '').split(',').map((s) => s.trim()).filter(Boolean),
+      code_type: String(fd.get('code_type') || 'number') as 'number' | 'secret',
+      allowed_types: String(fd.get('types') || '').split(',').map((s) => s.trim()).filter(Boolean),
       max_save_seconds: int('max_save', 7) * 86400,
       rate_limit_count: int('rate_count', 30),
       rate_limit_window: int('rate_window', 60),
@@ -115,17 +122,17 @@ export default function AdminPage({ config, onConfigSaved }) {
       await loadAdminConfig();
       alert('配置已保存');
     } catch (err) {
-      alert('保存失败：' + err.message);
+      alert('保存失败：' + errMsg(err));
     }
   }
 
-  async function deleteRoom(code) {
+  async function deleteRoom(code: string) {
     if (!confirm(`确定删除群 ${code} 吗？全部消息与文件也会被删除。`)) return;
     try {
       await apiFetch(`api/admin/room/${encodeURIComponent(code)}`, { method: 'DELETE' });
       loadList(page);
     } catch (e) {
-      alert('删除失败：' + e.message);
+      alert('删除失败：' + errMsg(e));
     }
   }
 
@@ -183,11 +190,11 @@ export default function AdminPage({ config, onConfigSaved }) {
         <details open>
           <summary>站点配置</summary>
           <form id="configForm" className="config-grid" onSubmit={saveConfig}>
-            <label className="field"><span>站点名称</span><input id="cfgName" name="name" maxLength="60" defaultValue={cfg ? cfg.name : ''} key={'n' + (cfg ? cfg.name : '')} /></label>
-            <label className="field"><span>站点描述</span><input id="cfgDesc" name="description" maxLength="200" defaultValue={cfg ? cfg.description : ''} key={'d' + (cfg ? cfg.description : '')} /></label>
-            <label className="field"><span>单文件上限 (MB)</span><input id="cfgMaxUpload" name="max_upload" type="number" min="1" step="1" defaultValue={cfg ? Math.round(cfg.max_upload_size / 1048576) : 1024} key={'u' + (cfg ? cfg.max_upload_size : '')} /></label>
-            <label className="field"><span>文本上限 (KB)</span><input id="cfgMaxText" name="max_text" type="number" min="1" step="1" defaultValue={cfg ? Math.round(cfg.max_text_size / 1024) : 1024} key={'t' + (cfg ? cfg.max_text_size : '')} /></label>
-            <label className="field"><span>分片大小 (MB)</span><input id="cfgChunk" name="chunk" type="number" min="1" step="1" defaultValue={cfg ? Math.round(cfg.chunk_size / 1048576) : 5} key={'c' + (cfg ? cfg.chunk_size : '')} /></label>
+            <label className="field"><span>站点名称</span><input id="cfgName" name="name" maxLength={60} defaultValue={cfg ? cfg.name : ''} key={'n' + (cfg ? cfg.name : '')} /></label>
+            <label className="field"><span>站点描述</span><input id="cfgDesc" name="description" maxLength={200} defaultValue={cfg ? cfg.description : ''} key={'d' + (cfg ? cfg.description : '')} /></label>
+            <label className="field"><span>单文件上限 (MB)</span><input id="cfgMaxUpload" name="max_upload" type="number" min={1} step={1} defaultValue={cfg ? Math.round(cfg.max_upload_size / 1048576) : 1024} key={'u' + (cfg ? cfg.max_upload_size : '')} /></label>
+            <label className="field"><span>文本上限 (KB)</span><input id="cfgMaxText" name="max_text" type="number" min={1} step={1} defaultValue={cfg ? Math.round(cfg.max_text_size / 1024) : 1024} key={'t' + (cfg ? cfg.max_text_size : '')} /></label>
+            <label className="field"><span>分片大小 (MB)</span><input id="cfgChunk" name="chunk" type="number" min={1} step={1} defaultValue={cfg ? Math.round(cfg.chunk_size / 1048576) : 5} key={'c' + (cfg ? cfg.chunk_size : '')} /></label>
             <label className="field"><span>群号类型</span>
               <select id="cfgCodeType" name="code_type" defaultValue={cfg ? cfg.code_type : 'number'} key={'k' + (cfg ? cfg.code_type : '')}>
                 <option value="number">5 位数字</option>
@@ -195,10 +202,10 @@ export default function AdminPage({ config, onConfigSaved }) {
               </select>
             </label>
             <label className="field"><span>类型白名单（逗号分隔或 *）</span><input id="cfgTypes" name="types" placeholder="jpg, png, zip 或 *" defaultValue={cfg ? (cfg.allowed_types || []).join(', ') : '*'} key={'w' + (cfg ? cfg.allowed_types.join(',') : '')} /></label>
-            <label className="field"><span>有效期上限（天，0=不限）</span><input id="cfgMaxSave" name="max_save" type="number" min="0" step="1" defaultValue={cfg ? (cfg.max_save_seconds ? Math.round(cfg.max_save_seconds / 86400) : 0) : 7} key={'s' + (cfg ? cfg.max_save_seconds : '')} /></label>
-            <label className="field"><span>限流次数（每窗口/IP，0=关闭）</span><input id="cfgRateCount" name="rate_count" type="number" min="0" step="1" defaultValue={cfg ? cfg.rate_limit_count : 30} key={'r' + (cfg ? cfg.rate_limit_count : '')} /></label>
-            <label className="field"><span>限流窗口（秒）</span><input id="cfgRateWindow" name="rate_window" type="number" min="1" step="1" defaultValue={cfg ? cfg.rate_limit_window : 60} key={'rw' + (cfg ? cfg.rate_limit_window : '')} /></label>
-            <label className="field"><span>未完成分片保留（小时）</span><input id="cfgChunkExpire" name="chunk_expire" type="number" min="1" step="1" defaultValue={cfg ? cfg.chunk_expire_hours : 24} key={'h' + (cfg ? cfg.chunk_expire_hours : '')} /></label>
+            <label className="field"><span>有效期上限（天，0=不限）</span><input id="cfgMaxSave" name="max_save" type="number" min={0} step={1} defaultValue={cfg ? (cfg.max_save_seconds ? Math.round(cfg.max_save_seconds / 86400) : 0) : 7} key={'s' + (cfg ? cfg.max_save_seconds : '')} /></label>
+            <label className="field"><span>限流次数（每窗口/IP，0=关闭）</span><input id="cfgRateCount" name="rate_count" type="number" min={0} step={1} defaultValue={cfg ? cfg.rate_limit_count : 30} key={'r' + (cfg ? cfg.rate_limit_count : '')} /></label>
+            <label className="field"><span>限流窗口（秒）</span><input id="cfgRateWindow" name="rate_window" type="number" min={1} step={1} defaultValue={cfg ? cfg.rate_limit_window : 60} key={'rw' + (cfg ? cfg.rate_limit_window : '')} /></label>
+            <label className="field"><span>未完成分片保留（小时）</span><input id="cfgChunkExpire" name="chunk_expire" type="number" min={1} step={1} defaultValue={cfg ? cfg.chunk_expire_hours : 24} key={'h' + (cfg ? cfg.chunk_expire_hours : '')} /></label>
             <label className="check span2"><input id="cfgOpenUpload" name="open_upload" type="checkbox" defaultChecked={cfg ? !!cfg.open_upload : true} key={'o' + (cfg ? cfg.open_upload : '')} /><span>开放匿名使用（关闭后仅管理员可发言）</span></label>
             <div className="span2"><button className="btn primary" type="submit">保存配置</button></div>
           </form>
@@ -223,7 +230,11 @@ export default function AdminPage({ config, onConfigSaved }) {
                     <td>{`${it.members} 人${it.allow_reply ? '' : ' · 已禁回复'}`}</td>
                     <td>{it.expire_at ? fmtTime(it.expire_at) : '永久'}</td>
                     <td>
-                      <button className="iconbtn" onClick={() => deleteRoom(it.code)}>删除</button>
+                      <button
+                        className="iconbtn danger"
+                        title="解散该群，删除全部消息并释放文件空间"
+                        onClick={() => deleteRoom(it.code)}
+                      >删除</button>
                     </td>
                   </tr>
                 ))}

@@ -188,6 +188,15 @@ html.theme-dark .banner { background: #332614; border-color: #5c4a1e; color: #fc
 .expire-inline input { width: 64px; }
 .expire-inline select { min-width: 0; }
 .chat-head-spacer { flex: 1; }
+.expire-badge {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  user-select: none;
+}
 .chat-code-area { display: flex; align-items: center; gap: 6px; }
 .chat-code-label { font-size: 12px; color: var(--muted); }
 .chat-code {
@@ -204,6 +213,8 @@ html.theme-dark .banner { background: #332614; border-color: #5c4a1e; color: #fc
   display: inline-flex; align-items: center; justify-content: center;
 }
 .iconbtn:hover { color: var(--accent); background: var(--accent-soft); }
+.iconbtn.danger { color: var(--danger); }
+.iconbtn.danger:hover { background: var(--danger-soft); }
 
 .chat-flow {
   display: flex;

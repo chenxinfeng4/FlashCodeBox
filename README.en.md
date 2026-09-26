@@ -153,7 +153,7 @@ Use `-trusted-proxies` (e.g. `127.0.0.1/32,10.0.0.0/8`) if you need real client 
 ## Tech stack
 
 - **Backend**: Go 1.27 · Gin · `modernc.org/sqlite` (pure Go, no CGO)
-- **Frontend**: Vite 7 · React 19 · hand-written CSS (light/dark CSS variables), embedded via `go:embed`
+- **Frontend**: Vite 7 · React 19 · TypeScript (strict) · hand-written CSS (light/dark CSS variables), embedded via `go:embed`
 - **Storage**: everything under `-data` — `flashcodebox.db`, `share/`, `chunks/`; stop and copy the directory to back up
 
 ## FAQ

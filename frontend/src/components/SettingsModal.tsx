@@ -1,10 +1,20 @@
 import React, { useEffect, useState } from 'react';
+import type { SettingsBody } from '../types';
+
+interface SettingsModalProps {
+  open: boolean;
+  room: { allow_reply: boolean; expire_at: number };
+  onSave: (body: SettingsBody) => void | Promise<void>;
+  onClose: () => void;
+}
+
+type ExpireStyle = 'hour' | 'day' | 'forever';
 
 /** 群主设置弹层：访客回消息开关 + 消息保留时长（常挂载，hidden 控制显隐） */
-export default function SettingsModal({ open, room, onSave, onClose }) {
-  const [allowReply, setAllowReply] = useState(!!room.allow_reply);
-  const [style, setStyle] = useState('day');
-  const [value, setValue] = useState(1);
+export default function SettingsModal({ open, room, onSave, onClose }: SettingsModalProps) {
+  const [allowReply, setAllowReply] = useState<boolean>(!!room.allow_reply);
+  const [style, setStyle] = useState<ExpireStyle>('day');
+  const [value, setValue] = useState<number>(1);
 
   // 每次打开时，按群当前值重置表单
   useEffect(() => {
@@ -48,7 +58,7 @@ export default function SettingsModal({ open, room, onSave, onClose }) {
               id="setExpireStyle"
               aria-label="保留时长单位"
               value={style}
-              onChange={(e) => setStyle(e.target.value)}
+              onChange={(e) => setStyle(e.target.value as ExpireStyle)}
             >
               <option value="hour">小时</option>
               <option value="day">天</option>
@@ -62,7 +72,7 @@ export default function SettingsModal({ open, room, onSave, onClose }) {
                 max="9999"
                 value={value}
                 aria-label="保留时长数值"
-                onChange={(e) => setValue(e.target.value)}
+                onChange={(e) => setValue(Number(e.target.value))}
               />
             )}
           </div>
@@ -79,7 +89,7 @@ export default function SettingsModal({ open, room, onSave, onClose }) {
           onClick={() => onSave({
             allow_reply: allowReply,
             expire_style: style,
-            expire_value: parseInt(value, 10) || 1,
+            expire_value: value || 1,
           })}
         >
           保存设置

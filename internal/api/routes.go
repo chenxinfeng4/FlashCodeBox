@@ -16,12 +16,14 @@ func RegisterRoutes(r *gin.Engine, a *App) {
 	room := api.Group("room")
 	room.POST("create", a.uploadRateLimit(), a.RoomCreate)
 	room.POST("join/:code", a.uploadRateLimit(), a.JoinRoom)
-	room.GET(":code/messages", a.RoomMessages) // 轮询，不限流
+	room.GET(":code/messages", a.RoomMessages) // 轮询兜底，不限流
+	room.GET(":code/events", a.RoomEvents)     // SSE 实时推送，不限流
 	room.POST(":code/send/text", a.uploadRateLimit(), a.RoomSendText)
 	room.POST("send/file", a.uploadRateLimit(), a.RoomSendFile)
 	room.GET(":code/messages/:msg/file", a.RoomMessageFile) // 下载/缩略图，不限流
 	room.GET(":code/settings", a.RoomSettings)
 	room.PUT(":code/settings", a.uploadRateLimit(), a.RoomSettings)
+	room.DELETE(":code", a.uploadRateLimit(), a.RoomDissolve) // 群主解散群
 
 	// 分片上传（complete 落入群）。
 	// 注意：分片 PUT 不做请求次数限流——大文件动辄上百个分片，

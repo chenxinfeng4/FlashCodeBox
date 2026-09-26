@@ -1,6 +1,6 @@
 import React from 'react';
 
-const EXT_COLORS = {
+const EXT_COLORS: Record<string, string> = {
   pdf: '#e5484d',
   doc: '#2b579a', docx: '#2b579a', rtf: '#2b579a',
   xls: '#217346', xlsx: '#217346', csv: '#217346',
@@ -15,24 +15,29 @@ const EXT_COLORS = {
   sh: '#4eaa25', json: '#6b7280', html: '#e34f26', css: '#2965f1',
 };
 
-export function fileExt(name = '') {
+export function fileExt(name = ''): string {
   const i = name.lastIndexOf('.');
   if (i < 0 || i === name.length - 1) return '';
   return name.slice(i + 1).toLowerCase().slice(0, 4);
 }
 
-export function fileColor(name = '') {
+export function fileColor(name = ''): string {
   return EXT_COLORS[fileExt(name)] || '#6b7280';
 }
 
-function readable(hex) {
+function readable(hex: string): string {
   const n = parseInt(hex.slice(1), 16);
   const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
   return lum > 0.62 ? '#1f2430' : '#ffffff';
 }
 
+interface FileIconProps {
+  name?: string;
+  width?: number;
+}
+
 /** 文档图标：右上折角 + 文件类型文字，颜色随扩展名 */
-export default function FileIcon({ name, width = 42 }) {
+export default function FileIcon({ name = '', width = 42 }: FileIconProps) {
   const ext = fileExt(name);
   const color = fileColor(name);
   const height = Math.round((width * 52) / 44);

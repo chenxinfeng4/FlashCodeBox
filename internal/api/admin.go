@@ -343,6 +343,8 @@ func (a *App) AdminDelete(c *gin.Context) {
 		fail(c, http.StatusNotFound, "记录不存在")
 		return
 	}
+	// 通知在线成员群已解散（SSE 订阅者立即被踢回首页）
+	a.sse.publish(code, "gone", gin.H{"code": code})
 	// 先删文件，再级联删消息、成员和群
 	msgs, err := a.Store.ListMessages(c.Request.Context(), code, 0, models.MaxMessagesPerRoom+1)
 	if err == nil {

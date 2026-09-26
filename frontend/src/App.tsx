@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { apiFetch } from './lib/api.js';
-import ChatPage from './components/ChatPage.jsx';
-import AdminPage from './components/AdminPage.jsx';
+import { apiFetch } from './lib/api';
+import ChatPage from './components/ChatPage';
+import AdminPage from './components/AdminPage';
+import type { SiteConfig } from './types';
 
 export default function App() {
-  const [config, setConfig] = useState(null);
-  const [route, setRoute] = useState('main');
+  const [config, setConfig] = useState<SiteConfig | null>(null);
+  const [route, setRoute] = useState<'main' | 'admin'>('main');
   const [dark, setDark] = useState(() => localStorage.getItem('fs_theme') === 'dark');
 
   // 主题：设备级偏好，保留 localStorage（新标签页应保持）
@@ -19,9 +20,9 @@ export default function App() {
     localStorage.setItem('fs_theme', next ? 'dark' : 'light');
   };
 
-  async function loadConfig() {
+  async function loadConfig(): Promise<SiteConfig | null> {
     try {
-      const cfg = await apiFetch('api/config');
+      const cfg = await apiFetch<SiteConfig>('api/config');
       setConfig(cfg);
       document.title = cfg.name || '快闪群传';
       return cfg;

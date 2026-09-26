@@ -1,13 +1,15 @@
 // 会话存储：sessionStorage（不跨标签页——刷新保留、关标签即清、新开标签页干净）
-export function getRoomSession() {
+import type { RoomSession } from '../types.js';
+
+export function getRoomSession(): RoomSession | null {
   try {
-    return JSON.parse(sessionStorage.getItem('fs_room') || 'null');
+    return JSON.parse(sessionStorage.getItem('fs_room') || 'null') as RoomSession | null;
   } catch (_) {
     return null;
   }
 }
 
-export function saveRoomSession(session) {
+export function saveRoomSession(session: RoomSession | null): void {
   if (session && session.code && session.token) {
     sessionStorage.setItem('fs_room', JSON.stringify(session));
   } else {
@@ -15,27 +17,27 @@ export function saveRoomSession(session) {
   }
 }
 
-export function getAdminToken() {
+export function getAdminToken(): string | null {
   return sessionStorage.getItem('fs_admin_token');
 }
 
-export function setAdminToken(token) {
+export function setAdminToken(token: string): void {
   sessionStorage.setItem('fs_admin_token', token);
 }
 
-export function clearAdminToken() {
+export function clearAdminToken(): void {
   sessionStorage.removeItem('fs_admin_token');
 }
 
 // 分片断点续传信息（同标签页）
-export function getUploadId(fileKey) {
+export function getUploadId(fileKey: string): string | null {
   return sessionStorage.getItem('fs_up_' + fileKey);
 }
 
-export function setUploadId(fileKey, uploadId) {
+export function setUploadId(fileKey: string, uploadId: string): void {
   sessionStorage.setItem('fs_up_' + fileKey, uploadId);
 }
 
-export function clearUploadId(fileKey) {
+export function clearUploadId(fileKey: string): void {
   sessionStorage.removeItem('fs_up_' + fileKey);
 }

@@ -76,8 +76,9 @@ CREATE TABLE IF NOT EXISTS settings (
 `
 
 // Open opens (and creates if needed) the SQLite database inside dataDir.
-// WAL mode + busy_timeout; a single connection keeps writers serialized and
-// avoids SQLITE_BUSY entirely, which is plenty for this workload.
+// WAL mode + busy_timeout. A small pool lets the read-heavy poll path (and
+// SSE snapshots) run concurrently — WAL readers never block the writer —
+// while writers still serialize behind busy_timeout instead of failing.
 func Open(dataDir string) (*sql.DB, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建数据目录失败: %w", err)
@@ -89,8 +90,8 @@ func Open(dataDir string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
-	gdb.SetMaxOpenConns(1)
-	gdb.SetMaxIdleConns(1)
+	gdb.SetMaxOpenConns(8)
+	gdb.SetMaxIdleConns(8)
 	gdb.SetConnMaxLifetime(0)
 
 	if err := gdb.Ping(); err != nil {

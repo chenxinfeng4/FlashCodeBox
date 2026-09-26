@@ -15,8 +15,10 @@ import (
 
 // Start runs the periodic cleanup loop: expired shares, stale chunk sessions
 // and orphan chunk directories. It mirrors the original's three background
-// tasks but in a single goroutine with one interval.
-func Start(ctx context.Context, cfg *config.Manager, st *store.Store, sto storage.Storage, chunkDir string) {
+// tasks but in a single goroutine with one interval. onExpire (optional) is
+// called after a room is deleted so SSE clients can be kicked immediately.
+func Start(ctx context.Context, cfg *config.Manager, st *store.Store, sto storage.Storage,
+	chunkDir string, onExpire func(code string)) {
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
@@ -25,13 +27,14 @@ func Start(ctx context.Context, cfg *config.Manager, st *store.Store, sto storag
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				sweep(cfg, st, sto, chunkDir)
+				sweep(cfg, st, sto, chunkDir, onExpire)
 			}
 		}
 	}()
 }
 
-func sweep(cfg *config.Manager, st *store.Store, sto storage.Storage, chunkDir string) {
+func sweep(cfg *config.Manager, st *store.Store, sto storage.Storage,
+	chunkDir string, onExpire func(code string)) {
 	now := models.Now()
 
 	// 1. 过期群：先删全部消息文件，再级联删行。
@@ -54,6 +57,9 @@ func sweep(cfg *config.Manager, st *store.Store, sto storage.Storage, chunkDir s
 				log.Printf("[janitor] 级联删除群失败 %s: %v", r.Code, err)
 			} else {
 				log.Printf("[janitor] 已清理过期群 %s（%d 条消息）", r.Code, len(msgs))
+				if onExpire != nil {
+					onExpire(r.Code)
+				}
 			}
 		}
 	}

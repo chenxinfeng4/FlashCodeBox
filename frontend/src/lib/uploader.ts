@@ -1,5 +1,6 @@
-import { apiFetch, sha256Hex, fileKey } from './api.js';
+import { apiFetch, roomFetch, sha256Hex, fileKey, errMsg } from './api.js';
 import { getUploadId, setUploadId, clearUploadId } from './storage.js';
+import type { ChunkSessionInfo, SendResult, UploadOptions } from '../types.js';
 
 /**
  * 分片上传一个文件：
@@ -7,20 +8,16 @@ import { getUploadId, setUploadId, clearUploadId } from './storage.js';
  *   - 并发 3 个 XHR 分片（upload.onprogress 字节级进度）
  *   - 失败退避重试，EMA 平滑网速
  *   - complete({code?, token?, expire_*}) → 落入群（或建群）
- *
- * @param {File} file
- * @param {object} opts { expire: {value, style}, code, token, onProgress(pct, speed) }
- * @returns complete 响应 {room, token, member, message}
  */
-export async function uploadFile(file, opts) {
+export async function uploadFile(file: File, opts: UploadOptions): Promise<SendResult> {
   const { expire, code, token, onProgress } = opts;
 
   // 1) 初始化或续传
-  let session = null;
+  let session: ChunkSessionInfo | null = null;
   const savedId = getUploadId(fileKey(file));
   if (savedId) {
     try {
-      session = await apiFetch(`api/upload/${encodeURIComponent(savedId)}/status`);
+      session = await roomFetch<ChunkSessionInfo>(`api/upload/${encodeURIComponent(savedId)}/status`, token || '');
     } catch (_) {
       session = null;
     }
@@ -34,7 +31,7 @@ export async function uploadFile(file, opts) {
         /* ignore */
       }
     }
-    session = await apiFetch('api/upload/init', {
+    session = await apiFetch<ChunkSessionInfo>('api/upload/init', {
       json: { file_name: file.name, file_size: file.size, file_hash: fileHash },
     });
   }
@@ -42,11 +39,11 @@ export async function uploadFile(file, opts) {
   setUploadId(fileKey(file), upload_id);
 
   // 2) 并发上传分片
-  const uploaded = new Set(session.uploaded || []);
-  const chunkLen = (i) => Math.min(chunk_size, file.size - i * chunk_size);
-  const partBytes = new Array(total_chunks).fill(0);
+  const uploaded = new Set<number>(session.uploaded || []);
+  const chunkLen = (i: number) => Math.min(chunk_size, file.size - i * chunk_size);
+  const partBytes = new Array<number>(total_chunks).fill(0);
 
-  function completedBytes() {
+  function completedBytes(): number {
     let done = 0;
     for (let i = 0; i < total_chunks; i++) {
       done += uploaded.has(i) ? chunkLen(i) : partBytes[i];
@@ -57,7 +54,7 @@ export async function uploadFile(file, opts) {
   let lastT = Date.now();
   let lastB = completedBytes();
   let speed = 0;
-  function sampleSpeed() {
+  function sampleSpeed(): number {
     const now = Date.now();
     const dt = (now - lastT) / 1000;
     const b = completedBytes();
@@ -71,7 +68,7 @@ export async function uploadFile(file, opts) {
   }
 
   let lastDom = 0;
-  function refresh() {
+  function refresh(): void {
     const b = sampleSpeed();
     const now = performance.now();
     if (now - lastDom < 100) return;
@@ -80,7 +77,7 @@ export async function uploadFile(file, opts) {
     if (onProgress) onProgress(pct, speed);
   }
 
-  function putChunk(i, blob, hash) {
+  function putChunk(i: number, blob: Blob, hash: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', `api/upload/${encodeURIComponent(upload_id)}/${i}`);
@@ -95,7 +92,7 @@ export async function uploadFile(file, opts) {
         } else {
           let m = `分片上传失败（HTTP ${xhr.status}）`;
           try {
-            const j = JSON.parse(xhr.responseText);
+            const j = JSON.parse(xhr.responseText) as { message?: string };
             if (j && j.message) m = j.message;
           } catch (_) {
             /* ignore */
@@ -109,10 +106,10 @@ export async function uploadFile(file, opts) {
   }
 
   let next = 0;
-  let failure = null;
+  let failure: Error | null = null;
   const WORKERS = 3;
 
-  async function worker() {
+  async function worker(): Promise<void> {
     while (!failure) {
       const i = next++;
       if (i >= total_chunks) return;
@@ -123,13 +120,13 @@ export async function uploadFile(file, opts) {
       let attempt = 0;
       for (;;) {
         try {
-          await putChunk(i, blob, hash);
+          await putChunk(i, blob, hash || '');
           break;
         } catch (err) {
           attempt++;
           partBytes[i] = 0;
           if (attempt >= 3) {
-            failure = err;
+            failure = err instanceof Error ? err : new Error(errMsg(err));
             return;
           }
           await new Promise((r) => setTimeout(r, 800 * attempt));
@@ -140,12 +137,12 @@ export async function uploadFile(file, opts) {
       refresh();
     }
   }
-  await Promise.all(Array.from({ length: WORKERS }, worker));
+  await Promise.all(Array.from({ length: WORKERS }, () => worker()));
   if (failure) throw failure;
   if (onProgress) onProgress(100, speed);
 
   // 3) 合并进群
-  const body = {};
+  const body: Record<string, unknown> = {};
   if (code) {
     body.code = code;
     body.token = token || '';
@@ -153,7 +150,9 @@ export async function uploadFile(file, opts) {
     body.expire_value = expire.value;
     body.expire_style = expire.style;
   }
-  const result = await apiFetch(`api/upload/${encodeURIComponent(upload_id)}/complete`, { json: body });
+  const result = await apiFetch<SendResult>(`api/upload/${encodeURIComponent(upload_id)}/complete`, {
+    json: body,
+  });
   clearUploadId(fileKey(file));
   return result;
 }

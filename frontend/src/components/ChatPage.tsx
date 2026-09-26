@@ -1,40 +1,54 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { apiFetch, roomFetch, humanBytes, isImageName, fileKey, validateFile } from '../lib/api.js';
-import { saveRoomSession, getRoomSession } from '../lib/storage.js';
-import { uploadFile } from '../lib/uploader.js';
-import MessageRow, { fileUrl } from './MessageRow.jsx';
-import FileIcon from './FileIcon.jsx';
-import SettingsModal from './SettingsModal.jsx';
-import Lightbox from './Lightbox.jsx';
+import { apiFetch, roomFetch, humanBytes, isImageName, fileKey, validateFile, copyText, expireCountdown, errMsg } from '../lib/api';
+import { saveRoomSession, getRoomSession } from '../lib/storage';
+import { uploadFile } from '../lib/uploader';
+import MessageRow, { fileUrl } from './MessageRow';
+import FileIcon from './FileIcon';
+import SettingsModal from './SettingsModal';
+import Lightbox from './Lightbox';
+import type { ChatState, MessageView, OutboxItem, SendResult, MessagesResult, SettingsBody, SiteConfig } from '../types';
 
 let outboxSeq = 0;
 
-export default function ChatPage({ config }) {
-  const [chat, setChat] = useState({
-    code: null, role: null, token: null, memberId: null,
-    sender: null, allowReply: true, expireAt: 0, joined: false,
-  });
-  const [messages, setMessages] = useState([]);
+// 每 intervalMs 跳动一次的当前秒级时间戳（驱动解散倒计时刷新）
+function useNow(active: boolean, intervalMs: number): number {
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    if (!active) return undefined;
+    const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), intervalMs);
+    return () => clearInterval(t);
+  }, [active, intervalMs]);
+  return now;
+}
+
+const EMPTY_CHAT: ChatState = {
+  code: null, role: null, token: null, memberId: null,
+  sender: null, allowReply: true, expireAt: 0, joined: false,
+};
+
+export default function ChatPage({ config }: { config: SiteConfig | null }) {
+  const [chat, setChat] = useState<ChatState>(EMPTY_CHAT);
+  const [messages, setMessages] = useState<MessageView[]>([]);
   // 发送队列：outboxRef 是唯一真源（避免 setState 异步导致队列读旧值），
   // outboxView 仅用于渲染。
-  const outboxRef = useRef([]);
-  const [outbox, setOutboxView] = useState([]);
+  const outboxRef = useRef<OutboxItem[]>([]);
+  const [outbox, setOutboxView] = useState<OutboxItem[]>([]);
   const syncOutbox = () => setOutboxView([...outboxRef.current]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [text, setText] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [lightbox, setLightbox] = useState(null);
+  const [lightbox, setLightbox] = useState<MessageView | null>(null);
 
-  const chatRef = useRef(chat);
+  const chatRef = useRef<ChatState>(chat);
   chatRef.current = chat;
   const lastIdRef = useRef(0);
-  const flowRef = useRef(null);
-  const textRef = useRef(null);
-  const fileInputRef = useRef(null);
-  const pollRef = useRef(null);
+  const flowRef = useRef<HTMLDivElement | null>(null);
+  const textRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const connRef = useRef<(() => void) | null>(null);
 
-  const showError = (msg) => setError(msg);
+  const showError = (msg: string) => setError(msg);
   const hideError = () => setError('');
 
   function scrollToBottom() {
@@ -42,7 +56,7 @@ export default function ChatPage({ config }) {
     if (el) el.scrollTop = el.scrollHeight;
   }
 
-  function mergeMessages(list) {
+  function mergeMessages(list: MessageView[] | null | undefined) {
     if (!list || !list.length) return;
     setMessages((prev) => {
       const map = new Map(prev.map((m) => [m.id, m]));
@@ -54,7 +68,8 @@ export default function ChatPage({ config }) {
     });
   }
 
-  function applyRoom(room, member) {
+  function applyRoom(room: { code: string; allow_reply: boolean; expire_at: number } | null,
+    member: { member_id: number; role: 'owner' | 'guest'; sender: string } | null) {
     setChat((c) => ({
       ...c,
       code: room ? room.code : c.code,
@@ -66,77 +81,160 @@ export default function ChatPage({ config }) {
 
   // ---------------- 加入 / 退出 ----------------
 
-  const joinRoom = useCallback(async (code, token) => {
+  const joinRoom = useCallback(async (code: string | null | undefined, token?: string | null) => {
     code = String(code || '').trim().toUpperCase();
     if (!code) return;
+    // 断开旧群的实时连接，避免旧群事件串进新群
+    if (connRef.current) { connRef.current(); connRef.current = null; }
     hideError();
     try {
-      const data = await roomFetch(`api/room/join/${encodeURIComponent(code)}`, token || '', { method: 'POST' });
+      const data = await roomFetch<SendResult>(`api/room/join/${encodeURIComponent(code)}`, token || '', { method: 'POST' });
       lastIdRef.current = 0;
       setMessages([]);
-      const c = {
-        code, token: data.token, joined: true,
-        ...(data.member ? { memberId: data.member.member_id, role: data.member.role, sender: data.member.sender } : {}),
-      };
-      setChat((prev) => ({ ...prev, ...c }));
-      applyRoom(data.room, data.member);
-      saveRoomSession({ code, role: data.member.role, token: data.token });
-      const full = await roomFetch(`api/room/${encodeURIComponent(code)}/messages?after=0`, data.token);
+      const member = data.member;
+      setChat((prev) => ({
+        ...prev,
+        code, token: data.token || null, joined: true,
+        ...(member ? { memberId: member.member_id, role: member.role, sender: member.sender } : {}),
+      }));
+      applyRoom(data.room, member || null);
+      if (member) saveRoomSession({ code, role: member.role, token: data.token || '' });
+      const full = await roomFetch<MessagesResult>(`api/room/${encodeURIComponent(code)}/messages?after=0`, data.token);
       applyRoom(full.room, full.you);
       mergeMessages(full.messages || []);
       setChat((prev) => ({ ...prev, joined: true }));
     } catch (e) {
-      showError(e.message);
+      showError(errMsg(e));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const leaveRoom = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
+    if (connRef.current) { connRef.current(); connRef.current = null; }
     lastIdRef.current = 0;
     setMessages([]);
     outboxRef.current = [];
     syncOutbox();
-    setChat({
-      code: null, role: null, token: null, memberId: null,
-      sender: null, allowReply: true, expireAt: 0, joined: false,
-    });
+    setChat(EMPTY_CHAT);
     saveRoomSession(null);
     hideError();
     if (location.hash.startsWith('#/c/')) location.hash = '';
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---------------- 轮询 ----------------
+  // 群主解散群：删除全部消息与文件，所有成员（含自己）被移出
+  const dissolveRoom = useCallback(async () => {
+    const c = chatRef.current;
+    if (!c.code || !c.token || c.role !== 'owner') return;
+    if (!confirm(`确定解散群 ${c.code} 吗？\n全部消息与文件将被删除，所有成员将被移出。`)) return;
+    try {
+      await roomFetch(`api/room/${encodeURIComponent(c.code)}`, c.token, { method: 'DELETE' });
+      leaveRoom();
+    } catch (e) {
+      showError('解散失败：' + errMsg(e));
+    }
+  }, [leaveRoom, showError]);
+
+  // ---------------- 实时（SSE）+ 轮询兜底 ----------------
 
   useEffect(() => {
     if (!chat.joined || !chat.code || !chat.token) return undefined;
+    let torn = false;
+    let es: EventSource | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
     async function pollOnce() {
       const c = chatRef.current;
       if (!c.code || !c.token || document.hidden) return;
       try {
-        const data = await roomFetch(
+        const data = await roomFetch<MessagesResult>(
           `api/room/${encodeURIComponent(c.code)}/messages?after=${lastIdRef.current}`,
           c.token,
         );
         applyRoom(data.room, null);
         mergeMessages(data.messages || []);
       } catch (e) {
-        if ([403, 404, 410].includes(e.status)) {
+        const status = (e as { status?: number }).status;
+        if ([403, 404, 410].includes(status as number)) {
+          teardown();
           leaveRoom();
-          showError('群聊已失效：' + e.message);
+          showError('群聊已失效：' + errMsg(e));
         }
         // 其他错误静默，下轮重试
       }
     }
-    pollOnce();
-    pollRef.current = setInterval(pollOnce, 2500);
+
+    function startPolling() {
+      if (pollTimer || torn) return;
+      pollTimer = setInterval(pollOnce, 2500);
+      pollOnce();
+    }
+
+    function stopPolling() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    function onVisible() {
+      if (!document.hidden) pollOnce(); // 后台期间可能错过事件，回前台补拉
+    }
+
+    function teardown() {
+      torn = true;
+      if (es) { es.close(); es = null; }
+      stopPolling();
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      document.removeEventListener('visibilitychange', onVisible);
+    }
+
+    function startSSE() {
+      if (torn) return;
+      const c = chatRef.current;
+      if (!c.code || !c.token) return;
+      const source = new EventSource(
+        `api/room/${encodeURIComponent(c.code)}/events?token=${encodeURIComponent(c.token)}`,
+      );
+      es = source;
+      source.addEventListener('message', (e) => {
+        try { mergeMessages([JSON.parse((e as MessageEvent).data) as MessageView]); } catch (_) { /* ignore */ }
+      });
+      source.addEventListener('room', (e) => {
+        try {
+          applyRoom(JSON.parse((e as MessageEvent).data) as Parameters<typeof applyRoom>[0], null);
+        } catch (_) { /* ignore */ }
+      });
+      source.addEventListener('members', (e) => {
+        try {
+          const d = JSON.parse((e as MessageEvent).data) as { count: number };
+          setChat((prev) => ({ ...prev, members: d.count }));
+        } catch (_) { /* ignore */ }
+      });
+      source.addEventListener('gone', () => {
+        teardown();
+        leaveRoom();
+        showError('群聊已解散');
+      });
+      source.onerror = () => {
+        // SSE 不可用（旧后端/严格反代/网络抖动）：降级轮询，稍后重试 SSE
+        if (es) { es.close(); es = null; }
+        if (torn) return;
+        startPolling();
+        if (!retryTimer) {
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            stopPolling();
+            startSSE();
+          }, 30000);
+        }
+      };
+    }
+
+    document.addEventListener('visibilitychange', onVisible);
+    startSSE();
+    connRef.current = teardown;
     return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      teardown();
+      if (connRef.current === teardown) connRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat.joined, chat.code, chat.token]);
@@ -149,7 +247,7 @@ export default function ChatPage({ config }) {
       if (m) {
         const code = m[1].toUpperCase();
         if (chatRef.current.code !== code) {
-          if (pollRef.current) clearInterval(pollRef.current);
+          if (connRef.current) { connRef.current(); connRef.current = null; }
           await joinRoom(code);
         }
         return;
@@ -167,6 +265,11 @@ export default function ChatPage({ config }) {
 
   // ---------------- 发送 ----------------
 
+  // 建群有效期：控件已移除，固定默认 1 天（群主可在设置弹层修改）
+  function readExpire(): { value: number; style: 'hour' | 'day' | 'forever' } {
+    return { value: 1, style: 'day' };
+  }
+
   const processOutbox = useCallback(async () => {
     const c = chatRef.current;
     if (c.joined && c.role === 'guest' && !c.allowReply) return;
@@ -177,19 +280,22 @@ export default function ChatPage({ config }) {
       if (t) {
         if (!c.code) {
           const ex = readExpire();
-          const r = await apiFetch('api/room/create', {
+          const r = await apiFetch<SendResult>('api/room/create', {
             json: { text: t, expire_value: ex.value, expire_style: ex.style },
           });
+          const member = r.member;
           setChat((prev) => ({
             ...prev,
-            code: r.room.code, token: r.token, joined: true,
-            memberId: r.member.member_id, role: r.member.role, sender: r.member.sender,
+            code: r.room.code, token: r.token || null, joined: true,
+            memberId: member ? member.member_id : null,
+            role: member ? member.role : 'owner',
+            sender: member ? member.sender : null,
           }));
           applyRoom(r.room, null);
-          saveRoomSession({ code: r.room.code, role: r.member.role, token: r.token });
+          if (member) saveRoomSession({ code: r.room.code, role: member.role, token: r.token || '' });
           mergeMessages([r.message]);
         } else {
-          const r = await roomFetch(`api/room/${encodeURIComponent(c.code)}/send/text`, c.token, {
+          const r = await roomFetch<SendResult>(`api/room/${encodeURIComponent(c.code)}/send/text`, c.token, {
             json: { token: c.token, text: t },
           });
           mergeMessages([r.message]);
@@ -215,43 +321,41 @@ export default function ChatPage({ config }) {
             },
           });
           if (!cc.code) {
+            const member = r.member;
             setChat((prev) => ({
               ...prev,
-              code: r.room.code, token: r.token, joined: true,
-              memberId: r.member.member_id, role: r.member.role, sender: r.member.sender,
+              code: r.room.code, token: r.token || null, joined: true,
+              memberId: member ? member.member_id : null,
+              role: member ? member.role : 'owner',
+              sender: member ? member.sender : null,
             }));
             applyRoom(r.room, null);
-            saveRoomSession({ code: r.room.code, role: r.member.role, token: r.token });
+            if (member) saveRoomSession({ code: r.room.code, role: member.role, token: r.token || '' });
           }
           outboxRef.current = outboxRef.current.filter((o) => o.uid !== item.uid);
           syncOutbox();
           mergeMessages([r.message]);
         } catch (e) {
           item.status = 'failed';
-          item.err = e.message;
+          item.err = errMsg(e);
           syncOutbox();
-          showError(e.message + '（点击气泡上的 ⚠ 可重试）');
+          showError(errMsg(e) + '（点击气泡上的 ⚠ 可重试）');
           break; // 失败即停，保留队列
         }
       }
     } catch (e) {
-      showError(e.message);
+      showError(errMsg(e));
     }
     setSending(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
-
-  // 建群有效期：控件已移除，固定默认 1 天（群主可在设置弹层修改）
-  function readExpire() {
-    return { value: 1, style: 'day' };
-  }
 
   function doSend() {
     if (!text.trim()) return;
     processOutbox();
   }
 
-  function addFiles(files) {
+  function addFiles(files: File[]) {
     hideError();
     let added = false;
     for (const f of files) {
@@ -269,7 +373,7 @@ export default function ChatPage({ config }) {
         showError('发送队列最多 100 项');
         break;
       }
-      const item = { uid: ++outboxSeq, file: f, status: 'sending', pct: 0, speed: 0 };
+      const item: OutboxItem = { uid: ++outboxSeq, file: f, status: 'sending', pct: 0, speed: 0 };
       if (isImageName(f.name)) {
         try {
           item.thumbUrl = URL.createObjectURL(f);
@@ -284,11 +388,12 @@ export default function ChatPage({ config }) {
       syncOutbox();
       processOutbox();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }
 
   // 全局粘贴文件
   useEffect(() => {
-    function onPaste(e) {
+    function onPaste(e: ClipboardEvent) {
       const files = e.clipboardData && e.clipboardData.files;
       if (files && files.length) {
         e.preventDefault();
@@ -303,16 +408,23 @@ export default function ChatPage({ config }) {
   // 消息变化 → 滚动到底
   useEffect(() => {
     scrollToBottom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, outbox]);
 
   // ---------------- 渲染 ----------------
 
   const { code, role, token, sender, allowReply, expireAt, joined } = chat;
   const locked = joined && role === 'guest' && !allowReply;
+  const nowSec = useNow(joined && expireAt > 0, 30000);
 
   return (
     <section className="card chat" id="chatPanel" aria-label="群聊">
       <div className="chat-head">
+        {joined && expireAt > 0 && (
+          <span className="expire-badge" title="到期自动解散">
+            剩余{expireCountdown(expireAt, nowSec)}
+          </span>
+        )}
         <div className="chat-head-spacer" />
         <div className="chat-code-area" id="codeArea" hidden={!joined}>
           <span className="chat-code-label">群号</span>
@@ -320,9 +432,11 @@ export default function ChatPage({ config }) {
           <button
             className="iconbtn" id="copyCodeBtn" type="button" title="复制群号" aria-label="复制群号"
             onClick={async (e) => {
-              await navigator.clipboard.writeText(code || '').catch(() => {});
-              e.currentTarget.textContent = '✓';
-              setTimeout(() => { e.currentTarget.textContent = ''; }, 1200);
+              // 注意：navigator.clipboard 仅在 https/localhost 存在，
+              // 局域网 http 场景必须走 copyText 的 execCommand 降级
+              const okC = await copyText(code || '');
+              (e.currentTarget as HTMLElement).textContent = okC ? '✓' : '✕';
+              setTimeout(() => { (e.currentTarget as HTMLElement).textContent = ''; }, 1200);
             }}
           >
             <svg viewBox="0 0 24 24" width="15" height="15"><rect x="9" y="9" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.8" fill="none" /><path d="M5 15V5a2 2 0 012-2h10" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" /></svg>
@@ -331,9 +445,9 @@ export default function ChatPage({ config }) {
             className="iconbtn" id="copyLinkBtn" type="button" title="复制邀请链接" aria-label="复制邀请链接"
             onClick={async (e) => {
               const link = location.origin + location.pathname.replace(/index\.html$/, '') + '#/c/' + code;
-              await navigator.clipboard.writeText(link).catch(() => {});
-              e.currentTarget.textContent = '✓';
-              setTimeout(() => { e.currentTarget.textContent = ''; }, 1200);
+              const okC = await copyText(link);
+              (e.currentTarget as HTMLElement).textContent = okC ? '✓' : '✕';
+              setTimeout(() => { (e.currentTarget as HTMLElement).textContent = ''; }, 1200);
             }}
           >
             <svg viewBox="0 0 24 24" width="15" height="15"><path d="M10 14a5 5 0 007.5.5l3-3a5 5 0 00-7-7l-1.7 1.7" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" /><path d="M14 10a5 5 0 00-7.5-.5l-3 3a5 5 0 007 7l1.7-1.7" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" /></svg>
@@ -349,6 +463,14 @@ export default function ChatPage({ config }) {
         >
           <svg viewBox="0 0 24 24" width="17" height="17"><circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" fill="none" /><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34h0a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55h0a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87v0a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
+        <button
+          className="iconbtn danger" id="dissolveBtn" type="button"
+          title="解散群聊（删除全部消息与文件）" aria-label="解散群聊"
+          hidden={!(joined && role === 'owner')}
+          onClick={dissolveRoom}
+        >
+          <svg viewBox="0 0 24 24" width="17" height="17"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M10 11v6M14 11v6" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
         <button className="iconbtn" id="leaveBtn" type="button" title="退出群聊" aria-label="退出群聊" hidden={!joined} onClick={leaveRoom}>
           <svg viewBox="0 0 24 24" width="17" height="17"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
@@ -361,14 +483,14 @@ export default function ChatPage({ config }) {
             id="joinCode"
             className="code-input"
             placeholder="群号"
-            maxLength="5"
+            maxLength={5}
             autoComplete="off"
-            spellCheck="false"
+            spellCheck={false}
             inputMode="numeric"
           />
           <button
             className="btn primary" id="joinSubmitBtn" type="button"
-            onClick={() => joinRoom(document.getElementById('joinCode').value)}
+            onClick={() => joinRoom((document.getElementById('joinCode') as HTMLInputElement).value)}
           >
             加 入
           </button>
@@ -445,7 +567,7 @@ export default function ChatPage({ config }) {
         <textarea
           id="sendText"
           ref={textRef}
-          rows="1"
+          rows={1}
           placeholder={locked ? '群主已关闭访客回消息' : '输入消息…'}
           disabled={locked}
           value={text}
@@ -456,7 +578,7 @@ export default function ChatPage({ config }) {
             el.style.height = Math.min(el.scrollHeight, 160) + 'px';
           }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               doSend();
             }
@@ -490,15 +612,15 @@ export default function ChatPage({ config }) {
         open={settingsOpen}
         room={{ allow_reply: allowReply, expire_at: expireAt }}
         onClose={() => setSettingsOpen(false)}
-        onSave={async (body) => {
+        onSave={async (body: SettingsBody) => {
           try {
-            const room = await roomFetch(`api/room/${encodeURIComponent(code)}/settings`, token, {
+            const room = await roomFetch(`api/room/${encodeURIComponent(code || '')}/settings`, token, {
               method: 'PUT', json: body,
             });
-            applyRoom(room, null);
+            applyRoom(room as Parameters<typeof applyRoom>[0], null);
             setSettingsOpen(false);
           } catch (e) {
-            showError(e.message);
+            showError(errMsg(e));
             setSettingsOpen(false);
           }
         }}
