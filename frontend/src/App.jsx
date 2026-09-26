@@ -74,9 +74,6 @@ export default function App() {
         </main>
       )}
 
-      <footer className="footer">
-        FileSender <span id="ver">{config ? 'v' + (config.version || '') : ''}</span> · 聊天室 · 全相对路径 · 反向代理子路径可用
-      </footer>
     </>
   );
 }
