@@ -37,7 +37,7 @@ type Config struct {
 
 func Defaults() *Config {
 	return &Config{
-		Name:             "快闪群享",
+		Name:             "快闪群传",
 		Description:      "局域网 · 临时群 · 到期自动解散",
 		OpenUpload:       true,
 		MaxUploadSize:    1 << 30, // 1 GiB

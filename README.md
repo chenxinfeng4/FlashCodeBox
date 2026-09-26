@@ -1,69 +1,139 @@
-# 快闪群享 (FlashShare)
+<div align="center">
 
-**局域网内的临时群聊**：同一 Wi-Fi 下，报「群号」即入，可收发**文字与文件**，到期自动解散。
+<img src="./.github/images/logo.svg" alt="FlashCodeBox" width="96" />
 
-基于 [FileCodeBox](https://github.com/vastsa/FileCodeBox) 思路的 Go 语言重写版。编译后是**单个静态二进制**（前端已内嵌，数据库用纯 Go 的 SQLite 驱动），没有任何运行时依赖 —— 在内网一台机器上跑起来，同一网段的电脑/手机打开网址就能用，文件数据不出内网、传输跑满内网带宽。
+# FlashCodeBox · 快闪群传
 
-## 使用方式
+### 局域网里的临时群：报个群号就进来，传文件像发消息
 
-1. 打开首页就是一个微信式聊天窗口：输入第一条消息（或发第一个文件）即**自动建群**并生成**群号**，你就是**群主**
-2. 把群号（或邀请链接）分享给同一局域网的任何人，他们输入群号、或打开链接即可加入，成为**访客1、访客2…**（人数不限）
-3. 群主与所有访客共用一个聊天窗口：文字气泡、文件卡片、图片缩略图（点击放大），大家都能下载文件
-4. 群主可随时打开「设置」：
-   - **允许访客回消息**（默认开启；关闭后访客输入框禁用）
-   - **消息保留时长**（默认 1 天，可改小时/天/永久；到期后整个群与文件自动解散删除）
+**同一 Wi-Fi，开箱即用；到期自动解散，数据不出内网。**
 
-## 主要特性
+[![License](https://img.shields.io/badge/License-MIT-3da639?style=flat-square)](./LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.27-00ADD8?style=flat-square&logo=go&logoColor=white)](./go.mod)
+[![Node](https://img.shields.io/badge/Node-20-5FA04E?style=flat-square&logo=nodedotjs&logoColor=white)](./frontend/package.json)
+[![Docker](https://img.shields.io/badge/Docker-多架构-2496ED?style=flat-square&logo=docker&logoColor=white)](#docker-部署)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-111111?style=flat-square)](#参与贡献)
 
-- **群聊**：群主/访客双角色、双向气泡（自己右侧绿、他人左侧白 + 群名片）、2.5s 轮询近实时刷新
-- **文件收发**：📎/拖拽/粘贴即自动上传；分片上传（默认 5MB/片）带字节级进度条与网速；断点续传；sha256 校验
-- **图片预览**：jpg/png/gif/webp/bmp/svg/avif 自动缩略图，单击灯箱放大、可下载原图
-- **局域网友好**：启动时打印 `局域网访问: http://192.168.x.x:端口`，同一 Wi-Fi 直接访问；数据不出内网
-- **反代友好**：前端全相对路径、服务端永不生成绝对 URL，子路径/任意端口开箱即用（分片避开 body 限制）
-- **下载鉴权**：文件仅群成员可下载（令牌随 URL 传递，支持 header 或 query）
-- **自动清理**：后台协程删除过期群（含全部消息与文件）、未完成分片、空群
-- **管理后台**（`#/admin`）：首次设置管理密码；站点配置在线修改、群列表/删除
-- 主题切换（明/暗，默认明）、IP 限流（0=关闭）、类型白名单、大小限制
+[English](./README.en.md)　·　[快速开始](#一条命令开始)　·　[常见问题](#常见问题)
 
-## 快速开始
+</div>
 
-前端为 Vite + React（构建产物由 Go embed 进二进制），需要先构建前端：
+<img src="./.github/images/screenshot.png" alt="FlashCodeBox 聊天界面" width="100%" />
+
+## 这是什么
+
+一个**单文件、零依赖**的局域网临时群聊工具。打开网页就是一个微信群式的窗口：
+
+- 发第一条消息（或第一个文件）→ **自动建群**，生成 5 位**群号**，你就是**群主**
+- 把群号或邀请链接丢给同一 Wi-Fi 下的同事/家人 → 输入即入，成为**访客**（人数不限）
+- 文字、文件、图片都能发；文件分片上传，**跑满内网带宽**；图片可缩略图 + 点开放大
+- 到期（默认 1 天）**整群自动解散**，消息与文件一并删除，数据只留在你自己的机器上
+
+适合：**会议室临时传资料、同事之间传大文件、家庭内网共享照片、不想注册任何账号的即用即走场景**。
+
+## 一条命令开始
+
+### 方式 A：Docker（推荐）
 
 ```bash
-# 1. 构建前端（产物输出到 internal/web/dist）
-cd frontend
-npm install
-npm run build
-cd ..
-
-# 2. 构建 Go（embed 前端产物）
-go build -o flashshare ./cmd/filesender
-
-# 3. 运行
-./flashshare -port 12345 -data ./data
+git clone https://github.com/<your-github>/FlashCodeBox.git
+cd FlashCodeBox
+docker compose up -d --build
 ```
 
-启动日志会列出本机的局域网地址，手机/同事连同一 Wi-Fi 直接用：
+或者用一键脚本（镜像不存在会自动构建，并打印局域网访问地址）：
+
+```bash
+bash scripts/quickstart.sh
+```
+
+也可以直接用已发布的镜像（把 `<your-github>` 换成实际仓库）：
+
+```bash
+docker run -d --restart unless-stopped \
+  -p 12345:12345 \
+  -v ./data:/data \
+  -e TZ=Asia/Shanghai \
+  --log-opt max-size=10m --log-opt max-file=3 \
+  --name flashcodebox \
+  ghcr.io/<your-github>/flashcodebox:latest
+```
+
+启动后打开 `http://localhost:12345` 即可。
+
+### 方式 B：本地二进制（无需 Docker）
+
+需要 Go 1.27+ 与 Node 20+：
+
+```bash
+bash scripts/build.sh          # 前端 Vite → Go embed → build/flashcodebox
+./build/flashcodebox -port 12345 -data ./data
+```
+
+启动日志会直接给出局域网地址，手机连同一 Wi-Fi 即可打开：
 
 ```
-快闪群享 (FlashShare) 1.0.0 已启动: http://:12345  数据目录: /path/to/data
+快闪群传 (FlashCodeBox) 1.0.0 已启动: http://:12345  数据目录: /path/to/data
 局域网访问: http://192.168.1.20:12345
 ```
 
-前端开发模式（热更新，API 代理到本地 12345）：
+## 初始化
+
+站点首次访问需要设置**管理密码**（仅用于管理后台，群聊本身不需要登录）：
+
+1. 打开首页 → 右上角「管理」→ 设置管理密码（≥ 8 位）
+2. 之后可在管理后台在线修改：站点名称/描述、上传大小、分片大小、群号类型、类型白名单、有效期上限、IP 限流等
+
+自动化部署可用脚本免手动初始化：
 
 ```bash
-cd frontend && npm run dev
+ADMIN_PASSWORD=yourpassword bash scripts/init-admin.sh
+# 自定义地址：BASE=http://127.0.0.1:8080 ADMIN_PASSWORD=... bash scripts/init-admin.sh
 ```
+
+## 特性
+
+| | |
+|---|---|
+| **即用即走** | 无需注册、无需账号；发第一条消息即建群，5 位群号/邀请链接加入 |
+| **局域网优先** | 启动打印局域网地址，同一 Wi-Fi 直接访问；文件在内网传输，数据不出网 |
+| **文字 / 文件 / 图片** | 微信式气泡；文件卡片（类型图标）；图片缩略图 + 灯箱放大 |
+| **大文件友好** | 分片上传（默认 5MB/片）带字节级进度与网速；断点续传；sha256 校验 |
+| **自动解散** | 默认 1 天到期，可改小时/天/永久；后台协程清理过期群、空群、未完成分片 |
+| **群主可控** | 群主可关闭“访客回消息”、修改保留时长；一键复制群号 / 邀请链接 |
+| **单二进制** | 前端已 embed，数据库为纯 Go SQLite；无任何运行期依赖，交叉编译即可 |
+| **反代友好** | 全相对路径、服务端不生成绝对 URL，子路径/任意端口开箱即用 |
+| **明暗主题** | 跟随按钮一键切换，移动端满屏适配 |
+
+<img src="./.github/images/screenshot-mobile.png" alt="移动端" width="320" />
+
+## Docker 部署
+
+`docker-compose.yml` 默认把数据放在 `./data`，端口 `12345`，可用 `.env` 覆盖：
+
+```bash
+cp .env.example .env    # 可选：改端口/时区
+docker compose up -d --build
+docker compose logs -f
+docker compose down
+```
+
+> **提示**：容器以非 root 用户（uid 1000）运行。若用宿主机目录做 bind mount，请确保可写：`sudo chown -R 1000:1000 ./data`。使用命名卷（named volume）则无需处理。
+
+多架构镜像由 GitHub Actions 在推送 `v*` 标签时自动构建并发布到 GHCR（`linux/amd64`、`linux/arm64`），见 [`.github/workflows/docker.yml`](./.github/workflows/docker.yml)。
+
+## 配置
+
+命令行参数（亦可用环境变量）：
 
 | flag | 环境变量 | 默认 | 说明 |
 |------|---------|------|------|
-| `-port` | `PORT` | `12345` | 监听端口（默认绑定 0.0.0.0） |
+| `-port` | `PORT` | `12345` | 监听端口（默认绑定 `0.0.0.0`） |
 | `-data` | `DATA_DIR` | `./data` | 数据目录（数据库/文件/配置） |
-| `-trusted-proxies` | `TRUSTED_PROXIES` | 空 | 可信反代网段（逗号分隔 CIDR） |
+| `-trusted-proxies` | `TRUSTED_PROXIES` | 空 | 可信反代网段（逗号分隔 CIDR），用于取真实客户端 IP |
 | `-debug` | `DEBUG=1` | 关 | 调试日志 |
 
-> 二进制/目录名仍为 `filesender`（Go module 名），品牌显示名可在管理后台修改。
+其余配置（站点名、上传上限、分片大小、群号类型、类型白名单、有效期上限、限流等）均可在**管理后台**在线修改，实时生效。
 
 ## 反向代理（子路径 + 任意端口）
 
@@ -81,27 +151,25 @@ server {
 }
 ```
 
-访问 `https://chat.example.com/chat/` 即可；带 `X-Forwarded-For` 的真实 IP 需 `-trusted-proxies` 指定代理网段。
+访问 `https://chat.example.com/chat/`；若要记录真实客户端 IP，请用 `-trusted-proxies` 指定代理网段（如 `127.0.0.1/32,10.0.0.0/8`）。
 
 ## API 一览
 
 响应统一 `{"code": http状态码, "message": "ok|错误", "data": {...}}`；文件 URL 一律相对路径。
-群成员令牌：`X-Room-Token` header（fetch 场景）或 `?token=`（`<img>`/`<a>` 场景）。
+群成员令牌：`X-Room-Token` header（fetch）或 `?token=`（`<img>`/`<a>`）。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `api/config` | 公开站点参数 |
-| POST | `api/room/create` | 群主首条文字消息建群 `{text, expire_value, expire_style}` → `{room, token, member, message}` |
+| POST | `api/room/create` | 群主首条文字消息建群 `{text, expire_value, expire_style}` |
 | POST | `api/room/join/{code}` | 加入（带有效 token 返回原身份，否则分配新访客编号） |
 | GET | `api/room/{code}/messages?after=N` | 轮询拉取消息（增量）+ 群状态 + 自身身份 |
 | POST | `api/room/{code}/send/text` | 发文字 `{token, text}` |
 | POST | `api/room/send/file` | 发文件（multipart：`code`/`token`/`file`，无 code 即建群） |
 | GET | `api/room/{code}/messages/{msg}/file` | 消息文件下载；图片可 `?inline=1`（仅成员） |
 | GET/PUT | `api/room/{code}/settings` | 群主读写设置：`allow_reply`、`expire_style/expire_value` |
-| POST | `api/upload/init` / PUT `api/upload/{id}/{n}` / POST `api/upload/{id}/complete` / GET `api/upload/{id}/status` | 分片上传（complete 带 `{code, token}` 入群） |
+| POST/PUT | `api/upload/init` · `api/upload/{id}/{n}` · `api/upload/{id}/complete` · `api/upload/{id}/status` | 分片上传 |
 | GET | `api/admin/*` | 管理后台（status/setup/login/config/list/room 删除） |
-
-示例：
 
 ```bash
 # 群主建群
@@ -118,23 +186,85 @@ curl -s -X POST http://127.0.0.1:12345/api/room/join/$CODE
 curl -s -X POST http://127.0.0.1:12345/api/room/send/file \
   -F "code=$CODE" -F "token=$TOKEN" -F "file=@报告.pdf"
 
-# 拉取消息（轮询 after=已见最大消息 id）
+# 拉取消息
 curl -s "http://127.0.0.1:12345/api/room/$CODE/messages?after=0" -H "X-Room-Token: $TOKEN"
 ```
 
-## 数据结构
+## 技术栈
 
-所有状态都在 `-data` 目录：`filesender.db`（rooms/members/messages/settings）、`share/`（文件）、`chunks/`（未完成分片）。停机整目录拷贝即备份。
+- **后端**：Go 1.27 · Gin · `modernc.org/sqlite`（纯 Go，无 CGO）
+- **前端**：Vite 7 · React 19 · 手写 CSS（明暗主题 CSS 变量），产物由 `go:embed` 打进二进制
+- **存储**：所有状态在 `-data` 目录 —— `flashcodebox.db`（群/成员/消息/配置）、`share/`（文件）、`chunks/`（未完成分片）；停机整目录拷贝即备份
+- **鉴权**：群成员随机令牌（header / query 双通道）；管理端 Bearer 令牌
 
-## 前端技术栈
+## 开发
 
-Vite + React 19（`frontend/`），构建产物输出到 `internal/web/dist` 并由 Go `embed` 进二进制：
-- `base: './'` 保持资产相对路径引用，反向代理子路径开箱即用
-- 无 UI 框架依赖（仅 react/react-dom），样式为手写 CSS（明暗主题 CSS 变量）
-- 会话身份存 `sessionStorage`（不跨标签页）；分片上传为 XHR 字节级进度 + EMA 网速
+```bash
+bash scripts/dev.sh      # Go 后端 :12345 + Vite 热更新 :5173（/api 自动代理）
+go test ./...            # 后端测试
+npm run build            # 仅构建前端（frontend/）
+make help                # 查看全部常用任务
+```
 
-## 与原版 FileCodeBox 的差异
+目录结构：
 
-- 形态从"单条分享"演进为"局域网临时群"：群号=原取件码，群主/访客多对多收发，到期自动解散
-- Go 单二进制（内嵌 React 构建产物）、全相对路径、启动打印局域网地址、分片上传默认开启（原版关闭）
-- 未实现：WebSocket 推送（现为 2.5s 轮询）、多存储后端（接口已预留）、多语言
+```
+cmd/flashcodebox/   程序入口（flag/env、启动横幅、局域网地址）
+internal/api/       HTTP 路由与处理（群、上传、管理）
+internal/store/     SQLite 数据访问
+internal/db/        schema 与旧库迁移
+internal/config/    配置默认值与持久化
+internal/storage/   本地文件存储
+internal/web/       embed 前端产物 + SPA 回退
+frontend/           Vite + React 源码
+```
+
+## 常见问题
+
+<details>
+<summary>手机/别人电脑打不开？</summary>
+
+- 确认在同一局域网，且用**局域网 IP**（如 `http://192.168.1.20:12345`）而不是 `localhost`
+- 检查防火墙是否放行端口；Docker 部署确认端口已映射
+- 启动日志里的 `局域网访问:` 行即正确地址
+
+</details>
+
+<details>
+<summary>文件太大传不动？</summary>
+
+默认单文件上限 1 GiB、分片 5 MiB。可在管理后台调整「单文件上限 / 分片大小」。反向代理时记得把 `client_max_body_size` 设得略大于分片。
+
+</details>
+
+<details>
+<summary>群到期后数据还在吗？</summary>
+
+不在。过期群的消息与文件由后台协程删除。数据仅存于 `-data` 目录，备份请在停机后整目录拷贝。
+
+</details>
+
+<details>
+<summary>如何修改站点名称 / 关闭限流？</summary>
+
+管理后台（`/#/admin`）可改站点名称、描述；限流次数填 `0` 即关闭。
+
+</details>
+
+## 参与贡献
+
+欢迎提交 Issue 与 Pull Request。开始前请先跑通 `go test ./...` 与前端构建。
+
+## 许可证
+
+[MIT](./LICENSE) © 2026 FlashCodeBox Contributors
+
+## 免责声明
+
+本项目仅供合法的文件与文本分享场景使用。请勿上传、存储或传播违法、侵权或未经授权的内容；使用者应自行承担部署、数据合规与内容管理责任。
+
+<div align="center">
+
+**如果 FlashCodeBox 对你有帮助，欢迎点亮一个 Star ⭐**
+
+</div>

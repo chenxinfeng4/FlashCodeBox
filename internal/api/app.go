@@ -7,9 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"filesender/internal/config"
-	"filesender/internal/storage"
-	"filesender/internal/store"
+	"flashcodebox/internal/config"
+	"flashcodebox/internal/storage"
+	"flashcodebox/internal/store"
 )
 
 const Version = "1.0.0"

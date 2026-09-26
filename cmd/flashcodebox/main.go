@@ -18,13 +18,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"filesender/internal/api"
-	"filesender/internal/config"
-	"filesender/internal/db"
-	"filesender/internal/janitor"
-	"filesender/internal/storage"
-	"filesender/internal/store"
-	"filesender/internal/web"
+	"flashcodebox/internal/api"
+	"flashcodebox/internal/config"
+	"flashcodebox/internal/db"
+	"flashcodebox/internal/janitor"
+	"flashcodebox/internal/storage"
+	"flashcodebox/internal/store"
+	"flashcodebox/internal/web"
 )
 
 func hasAnyPrefix(s string, prefixes ...string) bool {
@@ -163,7 +163,7 @@ func main() {
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 	go func() {
-		log.Printf("快闪群享 (FlashShare) %s 已启动: http://%s  数据目录: %s", api.Version, addr, absData)
+		log.Printf("快闪群传 (FlashCodeBox) %s 已启动: http://%s  数据目录: %s", api.Version, addr, absData)
 		for _, ip := range lanAddrs() {
 			log.Printf("局域网访问: http://%s:%d", ip, *port)
 		}

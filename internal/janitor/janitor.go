@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"filesender/internal/config"
-	"filesender/internal/models"
-	"filesender/internal/storage"
-	"filesender/internal/store"
+	"flashcodebox/internal/config"
+	"flashcodebox/internal/models"
+	"flashcodebox/internal/storage"
+	"flashcodebox/internal/store"
 )
 
 // Start runs the periodic cleanup loop: expired shares, stale chunk sessions

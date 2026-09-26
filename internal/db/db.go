@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"filesender/internal/models"
+	"flashcodebox/internal/models"
 
 	_ "modernc.org/sqlite"
 )
@@ -82,7 +82,7 @@ func Open(dataDir string) (*sql.DB, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建数据目录失败: %w", err)
 	}
-	dsn := filepath.Join(dataDir, "filesender.db") +
+	dsn := filepath.Join(dataDir, "flashcodebox.db") +
 		"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)"
 
 	gdb, err := sql.Open("sqlite", dsn)

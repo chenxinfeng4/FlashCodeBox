@@ -1,6 +1,16 @@
-/filesender
+# 二进制与构建产物
+/flashcodebox
+/build/
+/devdata/
+
+# 运行期数据
 /data/
 *.db
 *.db-shm
 *.db-wal
+
+# 依赖
 node_modules/
+
+# 本地环境
+.env

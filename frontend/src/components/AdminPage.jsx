@@ -96,7 +96,7 @@ export default function AdminPage({ config, onConfigSaved }) {
       return Number.isFinite(n) ? n : def;
     };
     const body = {
-      name: (fd.get('name') || '').trim() || '快闪群享',
+      name: (fd.get('name') || '').trim() || '快闪群传',
       description: fd.get('description') || '',
       open_upload: fd.get('open_upload') === 'on',
       max_upload_size: int('max_upload', 1024) * 1048576,

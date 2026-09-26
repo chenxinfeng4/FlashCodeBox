@@ -11,9 +11,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"filesender/internal/models"
-	"filesender/internal/storage"
-	"filesender/internal/store"
+	"flashcodebox/internal/models"
+	"flashcodebox/internal/storage"
+	"flashcodebox/internal/store"
 )
 
 // ---------------------------------------------------------------------------

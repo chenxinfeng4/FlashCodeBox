@@ -10,7 +10,7 @@ import (
 	"math/big"
 	"strings"
 
-	"filesender/internal/models"
+	"flashcodebox/internal/models"
 )
 
 var ErrNotFound = errors.New("记录不存在")

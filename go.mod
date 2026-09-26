@@ -1,4 +1,4 @@
-module filesender
+module flashcodebox
 
 go 1.27.1
 

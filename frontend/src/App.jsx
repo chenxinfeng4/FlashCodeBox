@@ -23,7 +23,7 @@ export default function App() {
     try {
       const cfg = await apiFetch('api/config');
       setConfig(cfg);
-      document.title = cfg.name || '快闪群享';
+      document.title = cfg.name || '快闪群传';
       return cfg;
     } catch (_) {
       return null;
@@ -50,7 +50,7 @@ export default function App() {
               <path d="M13 2L4.5 13h6L9 22l10.5-12h-6L14.5 2z" fill="#fff" />
             </svg>
           </span>
-          <span className="brand-name" id="siteName">{(config && config.name) || '快闪群享'}</span>
+          <span className="brand-name" id="siteName">{(config && config.name) || '快闪群传'}</span>
           <span className="brand-sub" id="siteDesc">{(config && config.description) || ''}</span>
         </a>
         <nav className="topbar-nav">

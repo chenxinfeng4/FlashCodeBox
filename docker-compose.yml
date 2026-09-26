@@ -1,0 +1,19 @@
+services:
+  flashcodebox:
+    build: .
+    image: flashcodebox:latest
+    container_name: flashcodebox
+    restart: unless-stopped
+    ports:
+      - "${PORT:-12345}:12345"
+    volumes:
+      - ./data:/data
+    environment:
+      - TZ=${TZ:-Asia/Shanghai}
+      # 反向代理后才需要：可信代理网段（逗号分隔 CIDR），否则日志/限流拿不到真实 IP
+      # - TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

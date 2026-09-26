@@ -1,0 +1,22 @@
+# 版本控制 / 编辑器
+.git
+.gitignore
+.github
+*.md
+
+# 前端依赖与源码（Docker 第 1 阶段会重新构建 dist）
+frontend/node_modules
+internal/web/dist
+web
+
+# 运行期数据（绝不进镜像）
+data
+*.db
+*.db-shm
+*.db-wal
+.env
+
+# 本地构建产物 / 测试脚本
+build
+flashcodebox
+scripts/*.local.sh

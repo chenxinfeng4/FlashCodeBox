@@ -16,9 +16,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 
-	"filesender/internal/config"
-	"filesender/internal/models"
-	"filesender/internal/store"
+	"flashcodebox/internal/config"
+	"flashcodebox/internal/models"
+	"flashcodebox/internal/store"
 )
 
 const (
