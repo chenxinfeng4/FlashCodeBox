@@ -29,7 +29,6 @@ export default function MessageRow({ m, mine, token, onImageClick }) {
               title={`${m.filename || ''}（${humanBytes(m.size)}）· 点击放大`}
               onClick={() => onImageClick(m)}
             />
-            <div className="imgcard-name">{m.filename || ''}</div>
           </div>
         ) : (
           <div className={mine ? 'filecard me-card' : 'filecard'}>
