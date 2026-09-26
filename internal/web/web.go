@@ -1,4 +1,6 @@
-// Package web embeds the SPA frontend and serves it with an SPA fallback.
+// Package web embeds the built SPA frontend (Vite + React build output in
+// ./dist, produced by `cd frontend && npm run build`) and serves it with an
+// SPA fallback.
 package web
 
 import (
@@ -11,8 +13,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-//go:embed all:static
-var staticFS embed.FS
+//go:embed all:dist
+var distFS embed.FS
 
 // Register mounts the frontend on the engine.
 //
@@ -20,10 +22,10 @@ var staticFS embed.FS
 //   - real files are served as-is (with range + mime support);
 //   - any other path falls back to index.html (SPA, hash routing);
 //   - a single-segment extension-less path (".../app") is redirected to
-//     ".../app/" so RELATIVE api URLs ("api/...") keep resolving under a
-//     reverse-proxy prefix.
+//     ".../app/" so RELATIVE asset URLs keep resolving under a reverse-proxy
+//     prefix. Vite is configured with base:'./' so asset refs are relative.
 func Register(r *gin.Engine) {
-	sub, err := fs.Sub(staticFS, "static")
+	sub, err := fs.Sub(distFS, "dist")
 	if err != nil {
 		panic(err)
 	}
@@ -34,8 +36,7 @@ func Register(r *gin.Engine) {
 		} else if !strings.HasSuffix(c.Request.URL.Path, "/") &&
 			path.Ext(p) == "" && !strings.Contains(p, "/") {
 			// 单段无扩展名路径（如 "/appsub"）→ 301 补斜杠，让相对路径的
-			// API 请求以该目录为基准解析（子路径反代的关键一环）。
-			// 多段路径视为 SPA 深链接，直接回退 index.html。
+			// 资源与 API 请求以该目录为基准解析（子路径反代的关键一环）。
 			loc := c.Request.URL.Path + "/"
 			if c.Request.URL.RawQuery != "" {
 				loc += "?" + c.Request.URL.RawQuery

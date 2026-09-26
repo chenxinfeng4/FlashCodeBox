@@ -25,9 +25,26 @@
 
 ## 快速开始
 
+前端为 Vite + React（构建产物由 Go embed 进二进制），需要先构建前端：
+
 ```bash
+# 1. 构建前端（产物输出到 internal/web/dist）
+cd frontend
+npm install
+npm run build
+cd ..
+
+# 2. 构建 Go（embed 前端产物）
 go build -o filesender ./cmd/filesender
+
+# 3. 运行
 ./filesender -port 12345 -data ./data
+```
+
+前端开发模式（热更新，API 代理到本地 12345）：
+
+```bash
+cd frontend && npm run dev
 ```
 
 | flag | 环境变量 | 默认 | 说明 |
@@ -98,8 +115,15 @@ curl -s "http://127.0.0.1:12345/api/room/$CODE/messages?after=0" -H "X-Room-Toke
 
 所有状态都在 `-data` 目录：`filesender.db`（rooms/members/messages/settings）、`share/`（文件）、`chunks/`（未完成分片）。停机整目录拷贝即备份。
 
+## 前端技术栈
+
+Vite + React 19（`frontend/`），构建产物输出到 `internal/web/dist` 并由 Go `embed` 进二进制：
+- `base: './'` 保持资产相对路径引用，反向代理子路径开箱即用
+- 无 UI 框架依赖（仅 react/react-dom），样式为手写 CSS（明暗主题 CSS 变量）
+- 会话身份存 `sessionStorage`（不跨标签页）；分片上传为 XHR 字节级进度 + EMA 网速
+
 ## 与原版 FileCodeBox 的差异
 
 - 形态从"单条分享"演进为"聊天室"：会议号=原取件码，楼主/访客多对多收发
-- Go 单二进制、前端内嵌、全相对路径、分片上传默认开启（原版关闭）
+- Go 单二进制（内嵌 React 构建产物）、全相对路径、分片上传默认开启（原版关闭）
 - 未实现：WebSocket 推送（现为 2.5s 轮询）、多存储后端（接口已预留）、多语言
