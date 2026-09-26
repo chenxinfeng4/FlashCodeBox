@@ -99,9 +99,27 @@ func (a *App) GetShare(c *gin.Context) {
 	})
 }
 
+// imageExts 用来决定 ?inline=1 时允许 inline 展示的扩展名（仅图片，
+// 其他类型一律 attachment，避免存屋内容 XSS）。svg 只在 <img> 上下文
+// 中展示（脚本不执行），lightbox 同样用 <img>，安全。
+var imageExts = map[string]string{
+	".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+	".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+	".svg": "image/svg+xml", ".avif": "image/avif",
+}
+
+func imageMime(filename string) string {
+	i := strings.LastIndexByte(filename, '.')
+	if i < 0 {
+		return ""
+	}
+	return imageExts[strings.ToLower(filename[i:])]
+}
+
 // Download streams one item. os.File + ServeContent give Range (断点续传)
-// support for free; every response is forced to attachment to defuse any
-// stored-content XSS (HTML/SVG uploads cannot execute).
+// support for free; responses default to attachment to defuse any
+// stored-content XSS. Images may be requested with ?inline=1 (used by the
+// thumbnail/lightbox <img> tags); only image types may be inlined.
 //
 //	GET api/download/{code}/{itemID}  指定条目
 //	GET api/download/{code}           兼容：第一个内容（文本 → .txt）
@@ -168,8 +186,15 @@ func (a *App) Download(c *gin.Context) {
 	defer f.Close()
 
 	// 下载不再计次——计次发生在取件（api/get）时
-	c.Header("Content-Type", "application/octet-stream")
-	setAttachment(c, item.Filename)
+	if mime := imageMime(item.Filename); mime != "" && c.Query("inline") == "1" {
+		// 图片内联展示（缩略图/灯箱），必须是图片扩展名才允许
+		c.Header("Content-Type", mime)
+		c.Header("Content-Disposition", "inline")
+		c.Header("X-Content-Type-Options", "nosniff")
+	} else {
+		c.Header("Content-Type", "application/octet-stream")
+		setAttachment(c, item.Filename)
+	}
 	http.ServeContent(c.Writer, c.Request, item.Filename, modTime, f)
 }
 

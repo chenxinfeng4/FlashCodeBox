@@ -140,6 +140,13 @@ function typesAllowed(name) {
   return list.includes(name.slice(i + 1).toLowerCase());
 }
 
+const IMG_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'avif'];
+
+function isImageName(name) {
+  const i = name.lastIndexOf('.');
+  return i >= 0 && IMG_EXT.includes(name.slice(i + 1).toLowerCase());
+}
+
 function validateFile(file) {
   if (state.config && file.size > state.config.max_upload_size) {
     return `超过大小限制（最大 ${humanBytes(state.config.max_upload_size)}）`;
@@ -148,19 +155,26 @@ function validateFile(file) {
   return null;
 }
 
-// 选择/拖拽/粘贴的文件立即进入消息流（pending 状态，点发送才上传）
+// 选择/拖拽/粘贴的文件立即进入消息流并自动开始上传
 function addFiles(files) {
   hideError('sendError');
   const cp = state.composer;
+  let added = false;
   for (const f of files) {
     if (f.size === 0) { showError('sendError', `「${f.name}」是空文件，已跳过`); continue; }
     const err = validateFile(f);
     if (err) { showError('sendError', `「${f.name}」${err}，已跳过`); continue; }
     if (cp.messages.some((m) => m.kind === 'file' && fileKey(m.file) === fileKey(f))) continue;
     if (cp.messages.length >= 100) { showError('sendError', '单个分享最多 100 条内容'); break; }
-    cp.messages.push({ uid: ++msgSeq, kind: 'file', file: f, status: 'pending' });
+    const msg = { uid: ++msgSeq, kind: 'file', file: f, status: 'sending' };
+    if (isImageName(f.name)) {
+      try { msg.thumbUrl = URL.createObjectURL(f); } catch (_) { /* ignore */ }
+    }
+    cp.messages.push(msg);
+    added = true;
   }
   renderChat();
+  if (added) processOutbox();
 }
 
 $('attachBtn').addEventListener('click', () => $('fileInput').click());
@@ -215,17 +229,75 @@ async function uploadFile(msg, expire, code) {
   const { upload_id, chunk_size, total_chunks } = session;
   localStorage.setItem('fs_up_' + fileKey(file), upload_id);
 
-  // 2) 并发上传分片
+  // 2) 并发上传分片（XHR 提供字节级 upload.onprogress 实时进度）
   const uploaded = new Set(session.uploaded || []);
-  let completedBytes = 0;
-  uploaded.forEach((i) => { completedBytes += Math.min(chunk_size, file.size - i * chunk_size); });
-  msg.pct = file.size ? Math.round((completedBytes / file.size) * 100) : 100;
-  updateMsgProgress(msg);
+  const chunkLen = (i) => Math.min(chunk_size, file.size - i * chunk_size);
+  const partBytes = new Array(total_chunks).fill(0); // 各分片已上传字节
+
+  function completedBytes() {
+    let done = 0;
+    for (let i = 0; i < total_chunks; i++) {
+      done += uploaded.has(i) ? chunkLen(i) : partBytes[i];
+    }
+    return done;
+  }
+
+  // 进度与网速（EMA 平滑），DOM 更新节流 100ms
+  let lastT = Date.now();
+  let lastB = completedBytes();
+  function sampleSpeed() {
+    const now = Date.now();
+    const dt = (now - lastT) / 1000;
+    const b = completedBytes();
+    if (dt >= 0.25) {
+      const inst = Math.max(0, (b - lastB) / dt);
+      msg.speed = msg.speed ? msg.speed * 0.6 + inst * 0.4 : inst;
+      lastT = now;
+      lastB = b;
+    }
+    return b;
+  }
+  let lastDom = 0;
+  function refresh() {
+    const b = sampleSpeed();
+    const now = performance.now();
+    if (now - lastDom < 100) return;
+    lastDom = now;
+    msg.pct = file.size ? Math.round((b / file.size) * 100) : 100;
+    updateMsgProgress(msg);
+  }
+
+  // 单个分片：XHR PUT，onprogress 更新 partBytes[i]
+  function putChunk(i, blob, hash) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', `api/upload/${encodeURIComponent(upload_id)}/${i}`);
+      if (hash) xhr.setRequestHeader('X-Chunk-Hash', hash);
+      xhr.upload.onprogress = (e) => {
+        partBytes[i] = e.loaded;
+        refresh();
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve();
+        } else {
+          let m = `分片上传失败（HTTP ${xhr.status}）`;
+          try {
+            const j = JSON.parse(xhr.responseText);
+            if (j && j.message) m = j.message;
+          } catch (_) { /* ignore */ }
+          reject(new Error(m));
+        }
+      };
+      xhr.onerror = () => reject(new Error('网络错误'));
+      xhr.ontimeout = () => reject(new Error('请求超时'));
+      xhr.send(blob);
+    });
+  }
 
   let next = 0;
   let failure = null;
   const WORKERS = 3;
-  const startTime = Date.now();
 
   async function worker() {
     while (!failure) {
@@ -238,36 +310,24 @@ async function uploadFile(msg, expire, code) {
       let attempt = 0;
       for (;;) {
         try {
-          const headers = { 'Content-Type': 'application/octet-stream' };
-          if (hash) headers['X-Chunk-Hash'] = hash;
-          const res = await fetch(`api/upload/${encodeURIComponent(upload_id)}/${i}`, {
-            method: 'PUT',
-            body: blob,
-            headers,
-          });
-          if (!res.ok) {
-            let m = `分片上传失败（HTTP ${res.status}）`;
-            try {
-              const j = await res.json();
-              if (j && j.message) m = j.message;
-            } catch (_) { /* ignore */ }
-            throw new Error(m);
-          }
+          await putChunk(i, blob, hash);
           break;
         } catch (err) {
           attempt++;
+          partBytes[i] = 0;
           if (attempt >= 3) { failure = err; return; }
           await new Promise((r) => setTimeout(r, 800 * attempt)); // 退避重试
         }
       }
+      partBytes[i] = 0;
       uploaded.add(i);
-      completedBytes += blob.size;
-      msg.pct = file.size ? Math.round((completedBytes / file.size) * 100) : 100;
-      updateMsgProgress(msg);
+      refresh();
     }
   }
   await Promise.all(Array.from({ length: WORKERS }, worker));
   if (failure) throw failure;
+  msg.pct = 100;
+  updateMsgProgress(msg);
 
   // 3) 合并并放入分享
   const body = {};
@@ -276,9 +336,21 @@ async function uploadFile(msg, expire, code) {
   return apiFetch(`api/upload/${encodeURIComponent(upload_id)}/complete`, { json: body });
 }
 
+function progressText(msg) {
+  const parts = [];
+  if (msg.pct != null) parts.push(msg.pct + '%');
+  if (msg.speed) parts.push(humanBytes(msg.speed) + '/s');
+  return parts.join(' · ');
+}
+
+// 进度局部更新：不动整棵消息流（避免打断图片加载与滚动）
 function updateMsgProgress(msg) {
-  const el = document.querySelector(`[data-uid="${msg.uid}"] .msg-progress .bar`);
-  if (el) el.style.width = (msg.pct || 0) + '%';
+  const row = document.querySelector(`[data-uid="${msg.uid}"]`);
+  if (!row) return;
+  const bar = row.querySelector('.msg-progress .bar');
+  if (bar) bar.style.width = (msg.pct || 0) + '%';
+  const txt = row.querySelector('.progress-txt');
+  if (txt) txt.textContent = progressText(msg);
 }
 
 /* ---------------- 消息流渲染 ---------------- */
@@ -293,12 +365,44 @@ function renderChat() {
     row.className = `msg ${m.kind} ${m.status}`;
     row.dataset.uid = m.uid;
 
-    const bubble = document.createElement('div');
-    bubble.className = m.kind === 'file' ? 'msg-bubble filebubble' : 'msg-bubble';
-
     if (m.kind === 'text') {
+      const bubble = document.createElement('div');
+      bubble.className = 'msg-bubble';
       bubble.textContent = m.text;
+      row.appendChild(bubble);
+    } else if (isImageName(m.file.name) && m.thumbUrl) {
+      // 图片气泡：缩略图 + 上传中叠加进度/网速
+      const bubble = document.createElement('div');
+      bubble.className = 'msg-bubble imgbubble';
+
+      const img = document.createElement('img');
+      img.className = 'thumb';
+      img.src = m.thumbUrl;
+      img.alt = m.file.name;
+      bubble.appendChild(img);
+
+      const ov = document.createElement('div');
+      ov.className = 'img-overlay';
+      const txt = document.createElement('span');
+      txt.className = 'progress-txt';
+      txt.textContent = progressText(m);
+      ov.appendChild(txt);
+      bubble.appendChild(ov);
+
+      const prog = document.createElement('div');
+      prog.className = 'msg-progress';
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.width = (m.pct || 0) + '%';
+      prog.appendChild(bar);
+      bubble.appendChild(prog);
+
+      row.appendChild(bubble);
     } else {
+      // 文件气泡：图标 + 文件名 + 进度条 + 网速
+      const bubble = document.createElement('div');
+      bubble.className = 'msg-bubble filebubble';
+
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('viewBox', '0 0 24 24');
       svg.setAttribute('width', '30');
@@ -322,7 +426,6 @@ function renderChat() {
       sz.className = 'filebubble-size';
       sz.textContent = humanBytes(m.file.size);
       info.append(nm, sz);
-      bubble.appendChild(info);
 
       const prog = document.createElement('div');
       prog.className = 'msg-progress';
@@ -330,9 +433,15 @@ function renderChat() {
       bar.className = 'bar';
       bar.style.width = (m.pct || 0) + '%';
       prog.appendChild(bar);
-      bubble.appendChild(prog);
+
+      const txt = document.createElement('div');
+      txt.className = 'progress-txt hint';
+      txt.textContent = progressText(m);
+
+      info.append(prog, txt);
+      bubble.appendChild(info);
+      row.appendChild(bubble);
     }
-    row.appendChild(bubble);
 
     // 右侧状态：发送中转圈 / 失败重试
     const stateEl = document.createElement('div');
@@ -346,7 +455,7 @@ function renderChat() {
       btn.className = 'retry';
       btn.textContent = '⚠';
       btn.title = (m.err || '发送失败') + '，点击重试';
-      btn.addEventListener('click', () => { m.status = 'sending'; renderChat(); doSend(); });
+      btn.addEventListener('click', () => { m.status = 'sending'; renderChat(); processOutbox(); });
       stateEl.appendChild(btn);
     }
     row.appendChild(stateEl);
@@ -374,28 +483,25 @@ function readExpire() {
   return { value, style: $('expireStyle').value };
 }
 
-async function doSend() {
+// 发送按钮 / Enter：把输入框文字入流，然后统一处理发送队列
+function doSend() {
+  const cp = state.composer;
+  const text = $('sendText').value.trim();
+  if (!text) return;
+  hideError('sendError');
+  cp.messages.push({ uid: ++msgSeq, kind: 'text', text, status: 'sending' });
+  $('sendText').value = '';
+  autogrow();
+  renderChat();
+  processOutbox();
+}
+
+// 顺序处理所有 sending 状态的消息（文字 → API；文件 → 分片上传）
+async function processOutbox() {
   const cp = state.composer;
   if (cp.busy) return;
-
-  const text = $('sendText').value.trim();
-  const hasPendingFiles = cp.messages.some((m) => m.kind === 'file' && m.status === 'pending');
-  if (!text && !hasPendingFiles) return;
-  if (!cp.code && $('expireCtrl').hidden) { /* 不会发生，防御 */ }
-  hideError('sendError');
-
-  // 文字入流
-  if (text) {
-    cp.messages.push({ uid: ++msgSeq, kind: 'text', text, status: 'sending' });
-    $('sendText').value = '';
-    autogrow();
-  }
-  // 待发文件转为 sending
-  for (const m of cp.messages) {
-    if (m.kind === 'file' && m.status === 'pending') m.status = 'sending';
-  }
+  if (!cp.messages.some((m) => m.status === 'sending')) return;
   setSendingUI(true);
-  renderChat();
 
   for (const m of cp.messages) {
     if (m.status !== 'sending') continue;
@@ -433,10 +539,14 @@ $('sendText').addEventListener('keydown', (e) => {
   }
 });
 
-// 新开分享：清空聊天流与当前取件码
+// 新开分享：清空聊天流与当前取件码，释放缩略图对象
 $('newShareBtn').addEventListener('click', () => {
-  state.composer.code = null;
-  state.composer.messages = [];
+  const cp = state.composer;
+  for (const m of cp.messages) {
+    if (m.thumbUrl) { try { URL.revokeObjectURL(m.thumbUrl); } catch (_) { /* ignore */ } }
+  }
+  cp.code = null;
+  cp.messages = [];
   hideError('sendError');
   renderChat();
   $('sendText').focus();
@@ -451,6 +561,44 @@ $('copyLinkBtn').addEventListener('click', async () => {
   const link = location.origin + location.pathname.replace(/index\.html$/, '') + '#/c/' + code;
   (await copyText(link)) && flashButton($('copyLinkBtn'), '✓');
 });
+
+/* ---------------- 灯箱（图片放大查看） ---------------- */
+
+function openLightbox(src, item) {
+  let lb = $('lightbox');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.id = 'lightbox';
+    lb.className = 'lightbox';
+    lb.innerHTML = '';
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'lightbox-close';
+    closeBtn.textContent = '✕';
+    closeBtn.title = '关闭';
+    closeBtn.addEventListener('click', () => { lb.hidden = true; });
+    const img = document.createElement('img');
+    img.className = 'lightbox-img';
+    const bar = document.createElement('div');
+    bar.className = 'lightbox-bar';
+    const dl = document.createElement('a');
+    dl.className = 'btn';
+    dl.textContent = '下载原图';
+    dl.setAttribute('download', '');
+    bar.appendChild(dl);
+    lb.append(closeBtn, img, bar);
+    lb.addEventListener('click', (e) => {
+      if (e.target === lb) lb.hidden = true; // 点遮罩关闭
+    });
+    document.body.appendChild(lb);
+  }
+  const img = lb.querySelector('.lightbox-img');
+  const dl = lb.querySelector('.lightbox-bar a');
+  img.src = src + (src.includes('?') ? '&' : '?') + 'inline=1';
+  img.alt = (item && item.filename) || '';
+  dl.href = src;
+  dl.setAttribute('download', (item && item.filename) || '');
+  lb.hidden = false;
+}
 
 /* ---------------- 取件：渲染内容条目 ---------------- */
 
@@ -484,6 +632,31 @@ function renderPick(data) {
       bar.appendChild(copyBtn);
       bubble.appendChild(bar);
       line.appendChild(bubble);
+      wrap.appendChild(line);
+    } else if (isImageName(it.filename || '')) {
+      // 图片条目：缩略图（inline 展示），单击灯箱放大，灯箱内可下载原图
+      const line = document.createElement('div');
+      line.className = 'bubble-wrap';
+
+      const card = document.createElement('div');
+      card.className = 'imgcard';
+
+      const src = it.download_url || `api/download/${encodeURIComponent(data.code)}/${it.id}`;
+      const img = document.createElement('img');
+      img.className = 'thumb';
+      img.loading = 'lazy';
+      img.src = src + (src.includes('?') ? '&' : '?') + 'inline=1';
+      img.alt = it.filename || '';
+      img.title = `${it.filename || ''}（${humanBytes(it.size)}）· 点击放大`;
+      img.addEventListener('click', () => openLightbox(src, it));
+      card.appendChild(img);
+
+      const nm = document.createElement('div');
+      nm.className = 'imgcard-name';
+      nm.textContent = it.filename || '';
+      card.appendChild(nm);
+
+      line.appendChild(card);
       wrap.appendChild(line);
     } else {
       const line = document.createElement('div');
