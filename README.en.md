@@ -16,7 +16,7 @@
 
 </div>
 
-<img src="./.github/images/screenshot.png" alt="FlashCodeBox chat UI" width="100%" />
+<img src="./.github/images/screenshot.webp" alt="FlashCodeBox chat UI" width="100%" />
 
 ## What is this
 
@@ -107,7 +107,7 @@ ADMIN_PASSWORD=yourpassword bash scripts/init-admin.sh
 | **Reverse-proxy ready** | All-relative URLs, no absolute URL generation; works under any sub-path/port |
 | **Light/dark theme** | One-click toggle; full mobile layout |
 
-<img src="./.github/images/screenshot-mobile.png" alt="Mobile" width="320" />
+<img src="./.github/images/screenshot-mobile.webp" alt="Mobile" width="320" />
 
 ## Configuration
 
@@ -143,14 +143,6 @@ Use `-trusted-proxies` (e.g. `127.0.0.1/32,10.0.0.0/8`) if you need real client 
 - **Backend**: Go 1.27 · Gin · `modernc.org/sqlite` (pure Go, no CGO)
 - **Frontend**: Vite 7 · React 19 · hand-written CSS (light/dark CSS variables), embedded via `go:embed`
 - **Storage**: everything under `-data` — `flashcodebox.db`, `share/`, `chunks/`; stop and copy the directory to back up
-
-## Development
-
-```bash
-bash scripts/dev.sh      # Go backend :12345 + Vite HMR :5173
-go test ./...            # backend tests
-make help                # all common tasks
-```
 
 ## FAQ
 
@@ -192,6 +184,8 @@ On top of that, FlashCodeBox makes two different choices:
 |---|---|---|
 | **Conversational UI** | Cabinet-style: upload → get a passcode → recipient picks up | **WeChat-style chat window**: sending the first message creates the group — sharing feels like chatting, friendlier for non-technical users |
 | **Multiple shares per session** | One share ↔ one passcode; repeat for every file | **Keep sending in one session**: send text and any number of files in the group; everyone sees them in real time and can download anytime |
+| **Same-window send & receive** | Uploading and picking up live on two separate pages | **Sender and recipient share one interface**: send and receive in the same chat window — no page switching |
+| **Sub-path reverse proxy** | — | **Any sub-path/port out of the box** (e.g. `https://chat.example.com/chat/`); all-relative URLs, zero rewrites |
 
 ## Contributing
 
@@ -199,7 +193,7 @@ Issues and PRs are welcome. Please make sure `go test ./...` and the frontend bu
 
 ## License
 
-[MIT](./LICENSE) © 2026 FlashCodeBox Contributors
+[MIT](./LICENSE) © 2026 chenxinfeng (陈昕枫)
 
 ## Disclaimer
 

@@ -18,7 +18,7 @@
 
 </div>
 
-<img src="./.github/images/screenshot.png" alt="FlashCodeBox 聊天界面" width="100%" />
+<img src="./.github/images/screenshot.webp" alt="FlashCodeBox 聊天界面" width="100%" />
 
 ## 这是什么
 
@@ -105,7 +105,7 @@ ADMIN_PASSWORD=yourpassword bash scripts/init-admin.sh
 | **反代友好** | 全相对路径、服务端不生成绝对 URL，子路径/任意端口开箱即用 |
 | **明暗主题** | 跟随按钮一键切换，移动端满屏适配 |
 
-<img src="./.github/images/screenshot-mobile.png" alt="移动端" width="320" />
+<img src="./.github/images/screenshot-mobile.webp" alt="移动端" width="320" />
 
 ## Docker 部署
 
@@ -163,71 +163,12 @@ server {
 
 访问 `https://chat.example.com/chat/`；若要记录真实客户端 IP，请用 `-trusted-proxies` 指定代理网段（如 `127.0.0.1/32,10.0.0.0/8`）。
 
-## API 一览
-
-响应统一 `{"code": http状态码, "message": "ok|错误", "data": {...}}`；文件 URL 一律相对路径。
-群成员令牌：`X-Room-Token` header（fetch）或 `?token=`（`<img>`/`<a>`）。
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `api/config` | 公开站点参数 |
-| POST | `api/room/create` | 群主首条文字消息建群 `{text, expire_value, expire_style}` |
-| POST | `api/room/join/{code}` | 加入（带有效 token 返回原身份，否则分配新访客编号） |
-| GET | `api/room/{code}/messages?after=N` | 轮询拉取消息（增量）+ 群状态 + 自身身份 |
-| POST | `api/room/{code}/send/text` | 发文字 `{token, text}` |
-| POST | `api/room/send/file` | 发文件（multipart：`code`/`token`/`file`，无 code 即建群） |
-| GET | `api/room/{code}/messages/{msg}/file` | 消息文件下载；图片可 `?inline=1`（仅成员） |
-| GET/PUT | `api/room/{code}/settings` | 群主读写设置：`allow_reply`、`expire_style/expire_value` |
-| POST/PUT | `api/upload/init` · `api/upload/{id}/{n}` · `api/upload/{id}/complete` · `api/upload/{id}/status` | 分片上传 |
-| GET | `api/admin/*` | 管理后台（status/setup/login/config/list/room 删除） |
-
-```bash
-# 群主建群
-R=$(curl -s -X POST http://127.0.0.1:12345/api/room/create \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"大家好","expire_value":1,"expire_style":"day"}')
-CODE=$(echo $R | jq -r .data.room.code)
-TOKEN=$(echo $R | jq -r .data.token)
-
-# 访客加入
-curl -s -X POST http://127.0.0.1:12345/api/room/join/$CODE
-
-# 群主发文件
-curl -s -X POST http://127.0.0.1:12345/api/room/send/file \
-  -F "code=$CODE" -F "token=$TOKEN" -F "file=@报告.pdf"
-
-# 拉取消息
-curl -s "http://127.0.0.1:12345/api/room/$CODE/messages?after=0" -H "X-Room-Token: $TOKEN"
-```
-
 ## 技术栈
 
 - **后端**：Go 1.27 · Gin · `modernc.org/sqlite`（纯 Go，无 CGO）
 - **前端**：Vite 7 · React 19 · 手写 CSS（明暗主题 CSS 变量），产物由 `go:embed` 打进二进制
 - **存储**：所有状态在 `-data` 目录 —— `flashcodebox.db`（群/成员/消息/配置）、`share/`（文件）、`chunks/`（未完成分片）；停机整目录拷贝即备份
 - **鉴权**：群成员随机令牌（header / query 双通道）；管理端 Bearer 令牌
-
-## 开发
-
-```bash
-bash scripts/dev.sh      # Go 后端 :12345 + Vite 热更新 :5173（/api 自动代理）
-go test ./...            # 后端测试
-npm run build            # 仅构建前端（frontend/）
-make help                # 查看全部常用任务
-```
-
-目录结构：
-
-```
-cmd/flashcodebox/   程序入口（flag/env、启动横幅、局域网地址）
-internal/api/       HTTP 路由与处理（群、上传、管理）
-internal/store/     SQLite 数据访问
-internal/db/        schema 与旧库迁移
-internal/config/    配置默认值与持久化
-internal/storage/   本地文件存储
-internal/web/       embed 前端产物 + SPA 回退
-frontend/           Vite + React 源码
-```
 
 ## 常见问题
 
@@ -278,6 +219,8 @@ frontend/           Vite + React 源码
 |---|---|---|
 | **对话式交互** | 快递柜式：上传 → 生成口令 → 对方凭码取件 | **微信群式聊天窗**：发条消息即建群，传文件像发消息，对非技术人员更友好 |
 | **一个会话多次分享** | 一次分享对应一个口令，多次分享需多次操作 | **一个 session 持续收发**：群内可反复发送文字与多份文件，全员实时可见、随时下载 |
+| **收发同界面** | 发送（上传）与取件分属两个页面，需来回切换 | **发送方与接收方在同一界面**：同一个聊天窗互发互见，发完即达，无需切换页面 |
+| **反代子路径** | — | **原生支持任意子路径/端口反代**（如 `https://chat.example.com/chat/`），全相对路径、零改造 |
 
 ## 参与贡献
 
@@ -285,7 +228,7 @@ frontend/           Vite + React 源码
 
 ## 许可证
 
-[MIT](./LICENSE) © 2026 FlashCodeBox Contributors
+[MIT](./LICENSE) © 2026 chenxinfeng（陈昕枫）
 
 ## 免责声明
 
