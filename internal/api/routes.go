@@ -10,16 +10,18 @@ func RegisterRoutes(r *gin.Engine, a *App) {
 
 	api.GET("config", a.PublicConfig)
 
-	// 聊天室
-	room := api.Group("room", a.uploadRateLimit())
-	room.POST("create", a.RoomCreate)                       // 楼主第一条文字消息 → 建房
-	room.POST("join/:code", a.JoinRoom)                     // 访客加入
-	room.GET(":code/messages", a.RoomMessages)              // 轮询拉取（after=增量）
-	room.POST(":code/send/text", a.RoomSendText)            // 发文字
-	room.POST("send/file", a.RoomSendFile)                  // 发文件（建房或追加）
-	room.GET(":code/messages/:msg/file", a.RoomMessageFile) // 消息文件下载/内联
-	room.GET(":code/settings", a.RoomSettings)              // 楼主读设置
-	room.PUT(":code/settings", a.RoomSettings)              // 楼主改设置
+	// 聊天室。
+	// 限流只挂写操作：轮询拉取与文件下载是正常高频读，不能计数，
+	// 否则访客一进入（join + 全量拉取 + 2.5s 轮询）就会撞上限流。
+	room := api.Group("room")
+	room.POST("create", a.uploadRateLimit(), a.RoomCreate)
+	room.POST("join/:code", a.uploadRateLimit(), a.JoinRoom)
+	room.GET(":code/messages", a.RoomMessages) // 轮询，不限流
+	room.POST(":code/send/text", a.uploadRateLimit(), a.RoomSendText)
+	room.POST("send/file", a.uploadRateLimit(), a.RoomSendFile)
+	room.GET(":code/messages/:msg/file", a.RoomMessageFile) // 下载/缩略图，不限流
+	room.GET(":code/settings", a.RoomSettings)
+	room.PUT(":code/settings", a.uploadRateLimit(), a.RoomSettings)
 
 	// 分片上传（complete 落入房间）。
 	// 注意：分片 PUT 不做请求次数限流——大文件动辄上百个分片，

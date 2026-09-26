@@ -215,6 +215,27 @@ html.theme-dark .banner { background: #332614; border-color: #5c4a1e; color: #fc
   padding: 12px 4px;
 }
 
+/* ---------- 加入面板（未加入时显示） ---------- */
+.join-panel {
+  text-align: center;
+  padding: 34px 16px 26px;
+  border: 1.5px dashed var(--line);
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+.join-title { font-size: 15px; font-weight: 700; margin-bottom: 14px; }
+.join-form { display: flex; gap: 10px; justify-content: center; }
+.join-form .code-input {
+  max-width: 220px;
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 8px;
+  text-transform: uppercase;
+  text-align: center;
+}
+.join-panel .hint { margin-top: 12px; }
+
 /* 消息行：自己靠右（绿），他人靠左（白） */
 .chatrow { display: flex; }
 .chatrow.mine { justify-content: flex-end; }

@@ -280,8 +280,7 @@ function updateHead() {
   $('codeArea').hidden = !joined;
   $('settingsBtn').hidden = !(joined && c.role === 'owner');
   $('leaveBtn').hidden = !joined;
-  $('joinBtn').hidden = joined;
-  $('expireCtrl').hidden = joined || !!(c.code === null && c.role === null && false);
+  $('joinPanel').hidden = joined;
   $('memberHint').hidden = !joined;
   if (joined) {
     $('roomCode').textContent = c.code;
@@ -333,6 +332,7 @@ async function joinRoom(code, token) {
     applyRoomState(data.room, data.member);
     state.chat.joined = true;
     saveRoomLocal();
+    $('joinCode').value = '';
     clearChat();
     // 全量拉取
     const full = await apiFetch(`api/room/${encodeURIComponent(code)}/messages?after=0`);
@@ -360,9 +360,22 @@ function leaveRoom() {
 }
 
 $('leaveBtn').addEventListener('click', leaveRoom);
-$('joinBtn').addEventListener('click', () => {
-  const code = prompt('输入会议号加入聊天室：');
+
+// 会议号输入栏：回车或按钮加入
+function submitJoin() {
+  const code = $('joinCode').value.trim();
   if (code) joinRoom(code);
+}
+$('joinSubmitBtn').addEventListener('click', submitJoin);
+$('joinCode').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    submitJoin();
+  }
+});
+$('joinCode').addEventListener('input', () => {
+  const el = $('joinCode');
+  el.value = el.value.toUpperCase().replace(/[^0-9A-Z]/g, '');
 });
 
 /* ---------------- 轮询 ---------------- */
