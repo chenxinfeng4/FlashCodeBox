@@ -286,7 +286,7 @@ function updateHead() {
   if (joined) {
     $('roomCode').textContent = c.code;
     const roleText = c.role === 'owner' ? '楼主' : (c.sender || '访客');
-    $('memberHint').textContent = `${roleText} · 有效期 ${expireText(c.expireAt)}`;
+    $('memberHint').textContent = `我：${roleText}`;
     $('roomState').textContent = '';
   } else {
     $('roomState').textContent = '发送第一条消息自动创建会议';
