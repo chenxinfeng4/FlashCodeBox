@@ -1,5 +1,5 @@
 # FlashCodeBox — 常用任务入口
-.PHONY: help build run docker compose up down logs test clean dev frontend
+.PHONY: help build release run docker compose up down logs test clean dev frontend
 
 IMAGE ?= flashcodebox:latest
 PORT  ?= 12345
@@ -9,6 +9,9 @@ help: ## 显示帮助
 
 build: ## 本地构建（前端 + Go）→ build/flashcodebox
 	bash scripts/build.sh
+
+release: ## 发布打包（linux amd64+arm64 tar.gz）→ release/
+	bash scripts/release.sh
 
 run: build ## 本地构建并运行
 	./build/flashcodebox -port $(PORT) -data ./data
@@ -38,4 +41,4 @@ test: ## 运行后端结构测试（go test）
 	go test ./...
 
 clean: ## 清理构建产物
-	rm -rf build devdata
+	rm -rf build devdata release

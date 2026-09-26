@@ -65,7 +65,15 @@ Then open `http://localhost:12345`.
 
 ### Local binary (no Docker)
 
-Requires Go 1.27+ and Node 20+:
+No toolchain needed: download the prebuilt binary straight from [Releases](https://github.com/chenxinfeng4/FlashCodeBox/releases/latest) (`flashcodebox-linux-amd64` / `flashcodebox-linux-arm64`; the tar.gz archives also bundle docs):
+
+```bash
+wget https://github.com/chenxinfeng4/FlashCodeBox/releases/latest/download/flashcodebox-linux-amd64 -O flashcodebox
+chmod +x flashcodebox
+./flashcodebox -port 12345 -data ./data
+```
+
+Or build it yourself (requires Go 1.27+ and Node 20+):
 
 ```bash
 bash scripts/build.sh          # Vite build → Go embed → build/flashcodebox

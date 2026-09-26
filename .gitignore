@@ -1,6 +1,7 @@
 # 二进制与构建产物
 /flashcodebox
 /build/
+/release/
 /devdata/
 
 # 运行期数据

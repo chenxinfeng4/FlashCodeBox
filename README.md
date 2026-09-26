@@ -63,7 +63,15 @@ docker run -d --restart unless-stopped \
 
 ### 方式 B：本地二进制（无需 Docker）
 
-需要 Go 1.27+ 与 Node 20+：
+无需编译环境：从 [Releases](https://github.com/chenxinfeng4/FlashCodeBox/releases/latest) 直接下载编译好的二进制（`flashcodebox-linux-amd64` / `flashcodebox-linux-arm64`，tar.gz 包内另附说明文档）：
+
+```bash
+wget https://github.com/chenxinfeng4/FlashCodeBox/releases/latest/download/flashcodebox-linux-amd64 -O flashcodebox
+chmod +x flashcodebox
+./flashcodebox -port 12345 -data ./data
+```
+
+也可以自行构建（需要 Go 1.27+ 与 Node 20+）：
 
 ```bash
 bash scripts/build.sh          # 前端 Vite → Go embed → build/flashcodebox

@@ -12,7 +12,9 @@ import (
 	"flashcodebox/internal/store"
 )
 
-const Version = "1.0.0"
+// Version is overridden at release builds via
+// -ldflags "-X flashcodebox/internal/api.Version=<tag>".
+var Version = "1.0.0"
 
 // App carries every dependency the handlers need.
 type App struct {
