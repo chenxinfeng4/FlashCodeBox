@@ -716,15 +716,24 @@ body { min-height: 100vh; min-height: 100dvh; }
   .footer { padding: 10px 0 calc(12px + env(safe-area-inset-bottom, 0px)); font-size: 11.5px; }
   .banner { margin: 0 10px 2px; font-size: 13px; }
 
-  /* 聊天卡片：占满剩余视口高度（满屏聊天体验） */
-  .layout.single { display: flex; flex-direction: column; }
+  /* 聊天卡片：占满剩余视口高度（满屏聊天体验）+ 宽度自适应铺满、无页面左右留白 */
+  .layout.single {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;        /* 覆盖基础规则 align-items:start，卡片铺满宽度 */
+    justify-content: flex-start;
+    padding: 0;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+  }
   #chatPanel {
     flex: 1;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    padding: 12px 12px 14px;
-    border-radius: 14px;
+    width: 100%;
+    padding: 10px 10px 12px;     /* 仅保留卡片内边距（消息距屏幕边） */
+    border: 0;
+    border-radius: 0;            /* 满屏聊天：直角贴边（微信风格） */
   }
   .chat-head { flex-wrap: wrap; row-gap: 6px; min-height: 0; }
   .chat-code { font-size: 17px; letter-spacing: 2px; }
