@@ -132,6 +132,11 @@ html.theme-dark .banner { background: #332614; border-color: #5c4a1e; color: #fc
 }
 .layout.admin { grid-template-columns: 1fr; max-width: 900px; }
 
+.layout.single {
+  grid-template-columns: minmax(0, 680px);
+  justify-content: center;   /* 单栏聊天窗口水平居中 */
+}
+
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; }
 }

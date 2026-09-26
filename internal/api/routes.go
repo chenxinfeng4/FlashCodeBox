@@ -21,8 +21,10 @@ func RegisterRoutes(r *gin.Engine, a *App) {
 	room.GET(":code/settings", a.RoomSettings)              // 楼主读设置
 	room.PUT(":code/settings", a.RoomSettings)              // 楼主改设置
 
-	// 分片上传（complete 落入房间）
-	up := api.Group("upload", a.uploadRateLimit())
+	// 分片上传（complete 落入房间）。
+	// 注意：分片 PUT 不做请求次数限流——大文件动辄上百个分片，
+	// 按请求数限流会误伤正常上传（429）；滥用防护由会话校验与过期清理承担。
+	up := api.Group("upload")
 	up.POST("init", a.UploadInit)
 	up.PUT(":id/:index", a.UploadChunk)
 	up.POST(":id/complete", a.UploadComplete)
