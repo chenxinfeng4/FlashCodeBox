@@ -150,6 +150,59 @@ server {
 
 Use `-trusted-proxies` (e.g. `127.0.0.1/32,10.0.0.0/8`) if you need real client IPs for logging/rate limiting.
 
+## Terminal usage (CLI / curl)
+
+Every API path is relative, tokens travel via header or `?token=`, and no sign-up is required — the service is fully usable from a terminal.
+
+### CLI script (recommended)
+
+```bash
+export FCB_BASE=http://192.168.1.20:12345     # service address (defaults to local 12345)
+bash scripts/cli.sh create "meeting room"     # create a room (you become owner); session saved to ~/.fcb_session
+bash scripts/cli.sh sendfile report.pdf a.png # send files
+bash scripts/cli.sh send "hello from shell"
+bash scripts/cli.sh ls                        # list recent messages
+bash scripts/cli.sh down 3                    # download file of message #3
+bash scripts/cli.sh join 12345                # join by code (another machine/terminal)
+bash scripts/cli.sh dissolve                  # dissolve the room (owner only)
+```
+
+Requires `curl` + `jq`; override the session file with `FCB_SESSION`.
+
+> opencode users: the repo ships a matching skill (`.opencode/skills/flashcodebox-cli/`).
+> Mentioning "send/download files" in a session triggers it automatically; copy it to
+> `~/.config/opencode/skills/` to enable it globally.
+
+### curl cheat sheet
+
+```bash
+B=http://127.0.0.1:12345
+
+# Create a room (first message creates it, you are the owner)
+R=$(curl -s -X POST $B/api/room/create -H 'Content-Type: application/json' \
+  -d '{"text":"hi","expire_value":1,"expire_style":"day"}')
+CODE=$(echo $R | jq -r .data.room.code); TOKEN=$(echo $R | jq -r .data.token)
+
+# Guest joins
+GUEST=$(curl -s -X POST $B/api/room/join/$CODE | jq -r .data.token)
+
+# Send text / send file (multipart, streamed)
+curl -s -X POST $B/api/room/$CODE/send/text -H 'Content-Type: application/json' \
+  -d "{\"token\":\"$TOKEN\",\"text\":\"hello\"}"
+curl -s -X POST $B/api/room/send/file -F "code=$CODE" -F "token=$TOKEN" -F "file=@report.pdf"
+
+# Fetch messages (incremental, ?after=last seen id)
+curl -s "$B/api/room/$CODE/messages?after=0" -H "X-Room-Token: $TOKEN"
+
+# Download a file (message id 3; header or query both work)
+curl -s "$B/api/room/$CODE/messages/3/file?token=$TOKEN" -o report.pdf
+
+# Owner dissolves the room (deletes all messages and files)
+curl -s -X DELETE $B/api/room/$CODE -H "X-Room-Token: $TOKEN"
+```
+
+For large files prefer chunked uploads (`api/upload/init` → `PUT api/upload/:id/:n` → `api/upload/:id/complete`, resumable with sha256 verification) — the web client uses them by default. Both direct and chunked uploads honor the admin "max upload size".
+
 ## Tech stack
 
 - **Backend**: Go 1.27 · Gin · `modernc.org/sqlite` (pure Go, no CGO)

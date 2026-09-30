@@ -175,6 +175,58 @@ server {
 
 访问 `https://chat.example.com/chat/`；若要记录真实客户端 IP，请用 `-trusted-proxies` 指定代理网段（如 `127.0.0.1/32,10.0.0.0/8`）。
 
+## 终端使用（CLI / curl）
+
+API 全部为相对路径、令牌走 header 或 `?token=`，无需注册登录，终端可直接使用。
+
+### CLI 脚本（推荐）
+
+```bash
+export FCB_BASE=http://192.168.1.20:12345     # 服务地址（默认本机 12345）
+bash scripts/cli.sh create "会议资料群"        # 建群（成为群主），会话存 ~/.fcb_session
+bash scripts/cli.sh sendfile 报告.pdf 照片.png # 发文件
+bash scripts/cli.sh send "来自终端的消息"
+bash scripts/cli.sh ls                        # 列出最近消息
+bash scripts/cli.sh down 3                    # 下载 #3 消息的文件到当前目录
+bash scripts/cli.sh join 12345                # 凭群号加入（另一台机器/另一个终端）
+bash scripts/cli.sh dissolve                  # 解散群（仅群主）
+```
+
+依赖 `curl` + `jq`；会话文件可用 `FCB_SESSION` 指定，多终端互不干扰。
+
+> opencode 用户：仓库内置同名 skill（`.opencode/skills/flashcodebox-cli/`），
+> 会话中提到"传文件/下载/查消息"即可自动触发，复制到 `~/.config/opencode/skills/` 可全局启用。
+
+### curl 速查
+
+```bash
+B=http://127.0.0.1:12345
+
+# 建群（发首条消息即建群，成为群主）
+R=$(curl -s -X POST $B/api/room/create -H 'Content-Type: application/json' \
+  -d '{"text":"大家好","expire_value":1,"expire_style":"day"}')
+CODE=$(echo $R | jq -r .data.room.code); TOKEN=$(echo $R | jq -r .data.token)
+
+# 访客加入
+GUEST=$(curl -s -X POST $B/api/room/join/$CODE | jq -r .data.token)
+
+# 发文字 / 发文件（multipart 流式直传）
+curl -s -X POST $B/api/room/$CODE/send/text -H 'Content-Type: application/json' \
+  -d "{\"token\":\"$TOKEN\",\"text\":\"你好\"}"
+curl -s -X POST $B/api/room/send/file -F "code=$CODE" -F "token=$TOKEN" -F "file=@报告.pdf"
+
+# 查询消息（增量拉取，?after=最后已见消息 id）
+curl -s "$B/api/room/$CODE/messages?after=0" -H "X-Room-Token: $TOKEN"
+
+# 下载文件（消息 id 3；header 或 query 均可）
+curl -s "$B/api/room/$CODE/messages/3/file?token=$TOKEN" -o 报告.pdf
+
+# 群主解散群（删除全部消息与文件）
+curl -s -X DELETE $B/api/room/$CODE -H "X-Room-Token: $TOKEN"
+```
+
+大文件推荐走分片上传（`api/upload/init` → `PUT api/upload/:id/:n` → `api/upload/:id/complete`，支持断点续传与 sha256 校验），网页端默认使用；curl 直传与分片均受管理后台「单文件上限」约束。
+
 ## 技术栈
 
 - **后端**：Go 1.27 · Gin · `modernc.org/sqlite`（纯 Go，无 CGO）
